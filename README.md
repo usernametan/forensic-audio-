@@ -138,23 +138,27 @@ npm install
 
 ### Step 2: Start the Development Services
 
-Run the services in two separate terminals (or as background services).
+You can start both the FastAPI backend and Vite frontend together in a **single command**:
 
-#### Terminal 1 — Start the FastAPI Backend:
-```bash
-# Run from repository root
-uvicorn backend.app.main:app --reload --port 8000
-```
-*The backend API will be available at `http://localhost:8000`. Automatic OpenAPI documentation is available at `http://localhost:8000/docs`.*
-
-#### Terminal 2 — Start the Vite Frontend:
 ```bash
 # Run from repository root
 npm run dev
 ```
-*The frontend user interface will be available at `http://localhost:5173`.*
 
-The Vite dev server automatically proxies API requests (`/evidence`, `/pipeline`, `/review`, `/export`, `/outputs`, `/health`) to port 8000.
+*(Or from the workspace root: `./start.sh` or `npm run dev`)*
+
+This concurrently starts:
+- **FastAPI backend** on `http://localhost:8000` (OpenAPI docs at `http://localhost:8000/docs`)
+- **Vite frontend** on `http://localhost:5173` with automatic reverse proxy to port 8000
+
+---
+
+#### Optional: Running Services Individually
+
+If you prefer separate terminals:
+- **Backend only:** `npm run dev:backend` (or `python3 -m uvicorn backend.app.main:app --reload --port 8000`)
+- **Frontend only:** `npm run dev:ui` (or `npx vite`)
+
 
 ---
 
