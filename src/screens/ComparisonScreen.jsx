@@ -82,6 +82,8 @@ function SampleCard({ role, tone, sample, color, inputRef }) {
   );
 }
 
+import { computeSHA256 } from '../services/api';
+
 export default function ComparisonScreen({ questioned, reference, setReference, comparison, onRunComparison, onContinue }) {
   const refInputRef = useRef(null);
   const qInputRef = useRef(null);
@@ -92,25 +94,32 @@ export default function ComparisonScreen({ questioned, reference, setReference, 
   const done = comparison.status === 'done';
   const result = comparison.result;
 
-  const acceptFile = (file, target) => {
+  const acceptFile = async (file, target) => {
     if (!file) return;
     const ok = /\.(wav|mp3|flac|m4a|ogg|aac|webm)$/i.test(file.name);
     if (!ok) {
       notify('Unsupported file type — select an audio file', 'warn');
       return;
     }
+    let sha = '';
+    try {
+      sha = await computeSHA256(file);
+    } catch {}
     const patch = {
       ref: `${target === 'q' ? 'EV' : 'REF'}-${String(Math.floor(Math.random() * 900) + 100)}`,
       name: file.name,
+      file,
+      hash: sha || 'pending-calculation…',
       sizeMB: Number((file.size / (1024 * 1024)).toFixed(1)),
       captured: 'Uploaded just now · local session',
+      custom: true,
     };
     if (target === 'q') {
       setQuestionedSample((s) => ({ ...s, ...patch }));
     } else {
       setReference((r) => ({ ...r, ...patch }));
     }
-    notify(`${target === 'q' ? 'Questioned' : 'Reference'} sample staged: ${file.name}`, 'success');
+    notify(`${target === 'q' ? 'Questioned' : 'Reference'} sample staged: ${file.name}${sha ? ` (SHA-256: ${sha.slice(0, 8)}…)` : ''}`, 'success');
   };
 
   return (

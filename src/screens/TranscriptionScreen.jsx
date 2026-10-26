@@ -25,17 +25,26 @@ function Tokens({ tokens }) {
 }
 
 function SegmentList({ segments }) {
+  if (!segments || !segments.length) {
+    return <p className="muted small" style={{ padding: '16px' }}>No speech segments recorded yet.</p>;
+  }
   return (
     <div className="seg-list">
-      {segments.map((seg) => (
-        <div className="seg" key={seg.time}>
-          <span className="seg-time mono">{seg.time}</span>
-          <span className={`seg-speaker spk-${seg.speaker}`}>{seg.speaker}</span>
-          <p className="seg-text">
-            <Tokens tokens={seg.tokens} />
-          </p>
-        </div>
-      ))}
+      {segments.map((seg, idx) => {
+        const time = seg.time || (typeof seg.start === 'number'
+          ? `${String(Math.floor(seg.start / 60)).padStart(2, '0')}:${String(Math.floor(seg.start % 60)).padStart(2, '0')}`
+          : '00:00');
+        const spk = seg.speaker || 'SPK-01';
+        return (
+          <div className="seg" key={seg.time || idx}>
+            <span className="seg-time mono">{time}</span>
+            <span className={`seg-speaker spk-${spk}`}>{spk}</span>
+            <p className="seg-text">
+              {seg.tokens ? <Tokens tokens={seg.tokens} /> : (seg.text || seg.text_src || '—')}
+            </p>
+          </div>
+        );
+      })}
     </div>
   );
 }

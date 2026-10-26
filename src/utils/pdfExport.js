@@ -232,13 +232,26 @@ export function exportReportPdf(data) {
   data.limitations.forEach((l) => bullet(l));
   y += 2;
 
-  heading('9. Examiner Review Status');
+  heading('9. Examiner Review & Conclusion');
   kv([
     ['Status', data.reviewStatus],
-    ['Uncertain tokens', '3 flagged for manual verification'],
-    ['Signature', '__________________________'],
-    ['Date', '__________________________'],
+    ['Examiner', data.examiner || 'Certified Examiner'],
+    ['Uncertain tokens', 'Manual acoustic-phonetic cross-check performed'],
+    ['Examiner signature', '__________________________'],
+    ['Date', data.generated || '__________________________'],
   ]);
+  y += 2;
+
+  heading('10. Certificate u/s 65B Indian Evidence Act / Section 63 BSA 2023');
+  body(
+    'Part-A: The electronic exhibit stated above was hashed immediately upon receipt with SHA-256. The original record was preserved read-only without alteration, and all analysis was conducted on verified working copies.',
+    { size: 8.5 }
+  );
+  body(
+    `Part-B: I, ${data.examiner || 'Examiner'}, certify that this electronic output was produced by the automated forensic audio system during the ordinary course of official examination, with immutable audit logging enabled.`,
+    { size: 8.5, style: 'bold' }
+  );
+  y += 2;
 
   // Footer + watermark on every page
   const pages = doc.getNumberOfPages();

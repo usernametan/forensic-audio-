@@ -17,7 +17,7 @@ const CRUMB = {
   [SCREENS.REPORT]: 'Forensic Report',
 };
 
-export default function Header({ screen, caseInfo, onMenu }) {
+export default function Header({ screen, caseInfo, onMenu, backendConnected, runId }) {
   const status = STATUS_BY_SCREEN[screen] || STATUS_BY_SCREEN[SCREENS.DASHBOARD];
 
   return (
@@ -42,6 +42,21 @@ export default function Header({ screen, caseInfo, onMenu }) {
       </div>
 
       <div className="topbar-right">
+        <div
+          className={`backend-status-pill ${backendConnected ? 'connected' : 'offline'}`}
+          title={backendConnected ? 'FastAPI Forensic Backend Connected (port 8000)' : 'Backend offline · Standalone prototype mode'}
+        >
+          <span className={`status-dot ${backendConnected ? 'online' : 'demo'}`} />
+          <span>{backendConnected ? 'API Live' : 'Demo Mode'}</span>
+        </div>
+
+        {runId && (
+          <div className="run-id-pill" title={`Active Pipeline Run ID: ${runId}`}>
+            <span className="run-id-label">RUN</span>
+            <span className="mono">{runId}</span>
+          </div>
+        )}
+
         <div className={`case-status ${status.tone}`}>
           <span className="pulse-dot" />
           <span className="case-status-label">Case Status</span>

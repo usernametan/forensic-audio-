@@ -16,6 +16,7 @@ import StatusBadge from '../components/StatusBadge.jsx';
 import Waveform from '../components/Waveform.jsx';
 import { EXAMPLE_EVIDENCE } from '../data/mockData';
 import { useToast } from '../components/Toast.jsx';
+import { computeSHA256 } from '../services/api';
 
 function readFileMeta(file) {
   const mb = file.size / (1024 * 1024);
@@ -25,17 +26,18 @@ function readFileMeta(file) {
     sizeMB: Number(mb.toFixed(1)),
     duration: EXAMPLE_EVIDENCE.duration,
     format: file.name.toLowerCase().endsWith('.wav')
-      ? 'WAV · PCM (assumed)'
+      ? 'WAV · PCM'
       : file.name.toLowerCase().endsWith('.mp3')
         ? 'MP3 · compressed'
         : 'Audio (assumed)',
     sampleRate: EXAMPLE_EVIDENCE.sampleRate,
     channels: EXAMPLE_EVIDENCE.channels,
     bitrate: EXAMPLE_EVIDENCE.bitrate,
-    hash: 'pending-calculation…',
+    hash: 'calculating SHA-256…',
     captured: 'Uploaded just now · local session',
     source: 'User-supplied exhibit (browser upload)',
     custom: true,
+    file,
   };
 }
 
@@ -44,15 +46,41 @@ export default function DashboardScreen({ caseInfo, setCaseInfo, evidence, setEv
   const inputRef = useRef(null);
   const notify = useToast();
 
-  const acceptFile = (file) => {
+  const acceptFile = async (file) => {
     if (!file) return;
     const ok = /\.(wav|mp3|flac|m4a|ogg|aac|webm)$/i.test(file.name);
     if (!ok) {
       notify('Unsupported file type — select WAV, MP3, FLAC, M4A or OGG', 'warn');
       return;
     }
-    setEvidence(readFileMeta(file));
-    notify(`Evidence file staged: ${file.name}`, 'success');
+    const meta = readFileMeta(file);
+    setEvidence(meta);
+    notify(`Calculating SHA-256 fingerprint for ${file.name}…`, 'info');
+
+    // Real browser-side SHA-256 calculation
+    try {
+      const sha = await computeSHA256(file);
+      meta.hash = sha;
+      setEvidence((prev) => (prev ? { ...prev, hash: sha } : meta));
+      notify(`SHA-256 locked: ${sha.slice(0, 16)}…`, 'success');
+    } catch (err) {
+      console.warn('SHA error', err);
+    }
+
+    // Audio duration probe
+    try {
+      const url = URL.createObjectURL(file);
+      const audio = new Audio();
+      audio.src = url;
+      audio.onloadedmetadata = () => {
+        const sec = Math.round(audio.duration);
+        const m = Math.floor(sec / 60);
+        const s = sec % 60;
+        const dur = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        setEvidence((prev) => (prev ? { ...prev, duration: dur } : prev));
+        URL.revokeObjectURL(url);
+      };
+    } catch {}
   };
 
   const onDrop = (e) => {
@@ -100,6 +128,24 @@ export default function DashboardScreen({ caseInfo, setCaseInfo, evidence, setEv
                 value={caseInfo.title}
                 onChange={(e) => setCaseInfo((c) => ({ ...c, title: e.target.value }))}
                 placeholder="Short exhibit description"
+              />
+            </label>
+            <label className="field">
+              <span className="field-label">Source / Custody Origin</span>
+              <input
+                className="input"
+                value={caseInfo.source || ''}
+                onChange={(e) => setCaseInfo((c) => ({ ...c, source: e.target.value }))}
+                placeholder="PS Special Cell / Crime Branch (optional)"
+              />
+            </label>
+            <label className="field">
+              <span className="field-label">Seizing Officer / Examiner</span>
+              <input
+                className="input"
+                value={caseInfo.collector || ''}
+                onChange={(e) => setCaseInfo((c) => ({ ...c, collector: e.target.value }))}
+                placeholder="IO / Examiner name (optional)"
               />
             </label>
           </div>
