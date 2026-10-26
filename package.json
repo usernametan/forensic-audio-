@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "setup": "npm install && python3 -m pip install -r backend/requirements.txt",
     "dev": "concurrently -n \"api,ui\" -c \"blue,green\" \"python3 -m uvicorn backend.app.main:app --reload --port 8000\" \"vite\"",
     "dev:ui": "vite",
     "dev:backend": "python3 -m uvicorn backend.app.main:app --reload --port 8000",
