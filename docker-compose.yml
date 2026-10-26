@@ -1,0 +1,29 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: forensics
+      POSTGRES_USER: faa
+      POSTGRES_PASSWORD: faa
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      FAA_DATABASE_URL: postgresql://faa:faa@db:5432/forensics
+    ports: ["8000:8000"]
+    volumes: ["./backend/storage:/srv/backend/storage"]
+    depends_on: [db]
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports: ["5173:80"]
+    depends_on: [api]
+
+volumes:
+  pgdata:

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   Sparkles,
   AudioWaveform,
@@ -43,7 +44,18 @@ function StageStatus({ stage }) {
   );
 }
 
-export default function PreprocessingScreen({ evidence, stages, onRunNoise, onRunSeparate, onContinue }) {
+export default function PreprocessingScreen({
+  evidence,
+  stages,
+  onRunNoise,
+  onRunSeparate,
+  onContinue,
+  runId,
+  reviewData,
+  backendConnected,
+}) {
+  const [specTab, setSpecTab] = useState('processed');
+  const [audioError, setAudioError] = useState(false);
   const overall = Math.round(
     (stages.noise.progress + stages.enhance.progress + stages.separate.progress) / 3
   );
@@ -51,7 +63,45 @@ export default function PreprocessingScreen({ evidence, stages, onRunNoise, onRu
     stages.noise.status === 'running' ||
     stages.enhance.status === 'running' ||
     stages.separate.status === 'running';
+  const noiseDone = stages.noise.status === 'complete';
   const separated = stages.separate.status === 'complete';
+
+  const denoiseMetrics = reviewData?.stages?.denoise?.metrics;
+  const diarizeMetrics = reviewData?.stages?.diarize?.metrics;
+  const acousticMetrics = reviewData?.stages?.acoustic?.metrics;
+
+  // Derive speaker tracks from real backend diarization if available
+  let displayTracks = SPEAKER_TRACKS;
+  if (diarizeMetrics?.segments?.length) {
+    const spkMap = {};
+    diarizeMetrics.segments.forEach((seg) => {
+      const spk = seg.speaker || 'SPEAKER_00';
+      if (!spkMap[spk]) {
+        spkMap[spk] = { dur: 0, count: 0 };
+      }
+      spkMap[spk].dur += Math.max(0, seg.end - seg.start);
+      spkMap[spk].count += 1;
+    });
+    const totalSpkDur = Object.values(spkMap).reduce((acc, v) => acc + v.dur, 0) || 1;
+    const colors = ['#22d3ee', '#a78bfa', '#34d399', '#fbbf24'];
+    displayTracks = Object.keys(spkMap).map((k, idx) => {
+      const d = spkMap[k];
+      const m = Math.floor(d.dur / 60);
+      const s = Math.round(d.dur % 60);
+      const durStr = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+      const pct = Math.round((d.dur / totalSpkDur) * 100);
+      return {
+        id: k,
+        label: k.replace('SPEAKER_', 'Speaker '),
+        color: colors[idx % colors.length],
+        talkTime: `${pct}%`,
+        segments: d.count,
+        duration: durStr,
+        pitch: acousticMetrics?.f0_mean ? `${Math.round(acousticMetrics.f0_mean - (acousticMetrics.f0_std || 20))} – ${Math.round(acousticMetrics.f0_mean + (acousticMetrics.f0_std || 20))} Hz` : '120 – 165 Hz',
+        seed: (idx + 1) * 17,
+      };
+    });
+  }
 
   return (
     <div className="stack-xl">
@@ -72,8 +122,8 @@ export default function PreprocessingScreen({ evidence, stages, onRunNoise, onRu
       </div>
 
       <GlassPanel
-        title="Master Waveform — Questioned Exhibit"
-        subtitle="Visual overview of the full recording before and during preprocessing"
+        title="Master Waveform & Acoustic Visualizer"
+        subtitle="Dual waveform and FFT spectrogram of the questioned recording"
         actions={
           <span className="mono panel-meta">
             {evidence.duration} · {evidence.sampleRate} · {evidence.channels}
@@ -81,7 +131,7 @@ export default function PreprocessingScreen({ evidence, stages, onRunNoise, onRu
         }
       >
         <div className="hero-wave">
-          <Waveform seed={101} count={170} height={132} color="#22d3ee" animated={anyRunning} />
+          <Waveform seed={101} count={170} height={120} color="#22d3ee" animated={anyRunning} />
           {anyRunning && <span className="wave-scanline" />}
           <div className="wave-ruler">
             <span>00:00</span>
@@ -89,9 +139,62 @@ export default function PreprocessingScreen({ evidence, stages, onRunNoise, onRu
             <span>01:48</span>
             <span>02:42</span>
             <span>03:36</span>
-            <span>04:32</span>
+            <span>{evidence.duration}</span>
           </div>
         </div>
+
+        {/* Live Spectrogram Viewer when backend run produces spectrograms */}
+        {runId && noiseDone && (
+          <div className="spectrogram-container">
+            <div className="spectrogram-tabs">
+              <button
+                className={`spectrogram-tab ${specTab === 'processed' ? 'active' : ''}`}
+                onClick={() => setSpecTab('processed')}
+              >
+                Processed Spectrogram (Denoised)
+              </button>
+              <button
+                className={`spectrogram-tab ${specTab === 'original' ? 'active' : ''}`}
+                onClick={() => setSpecTab('original')}
+              >
+                Original Spectrogram (Raw)
+              </button>
+            </div>
+            <div className="spectrogram-view">
+              <img
+                src={specTab === 'processed' ? `/outputs/${runId}_spec_processed.png` : `/outputs/${runId}_spec_original.png`}
+                alt="Spectrogram"
+                onError={(e) => {
+                  e.target.style.display = 'none';
+                }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Live Audio Player for Denoised Audio */}
+        {runId && noiseDone && (
+          <div className="audio-player-box">
+            <div>
+              <p className="label-strong small">Denoised Audio Extract</p>
+              <p className="muted small">
+                {denoiseMetrics?.engine ? `Engine: ${denoiseMetrics.engine}` : 'DeepFilterNet / Spectral Subtraction'}
+                {denoiseMetrics?.snr_proxy_db ? ` · SNR: +${denoiseMetrics.snr_proxy_db.toFixed(1)} dB` : ''}
+              </p>
+            </div>
+            {audioError ? (
+              <p className="muted small" style={{ fontStyle: 'italic', padding: '8px 12px', background: 'rgba(255,255,255,0.03)', borderRadius: '6px' }}>
+                Audio extract is being processed or temporarily unavailable.
+              </p>
+            ) : (
+              <audio
+                controls
+                src={`/outputs/${runId}_denoised.wav`}
+                onError={() => setAudioError(true)}
+              />
+            )}
+          </div>
+        )}
 
         <div className="overall-progress">
           <div className="overall-progress-head">
@@ -148,7 +251,7 @@ export default function PreprocessingScreen({ evidence, stages, onRunNoise, onRu
           subtitle="Diarized output — one track per detected talker"
           actions={
             separated ? (
-              <StatusBadge tone="violet">2 speakers · 47 segments</StatusBadge>
+              <StatusBadge tone="violet">{displayTracks.length} speakers · {diarizeMetrics?.segments?.length || 47} segments</StatusBadge>
             ) : (
               <StatusBadge tone="gray">Awaiting separation</StatusBadge>
             )
@@ -156,7 +259,7 @@ export default function PreprocessingScreen({ evidence, stages, onRunNoise, onRu
         >
           {separated ? (
             <div className="track-list">
-              {SPEAKER_TRACKS.map((track) => (
+              {displayTracks.map((track) => (
                 <div className="track-card" key={track.id} style={{ '--track': track.color }}>
                   <div className="track-head">
                     <span className="track-avatar">
@@ -180,13 +283,13 @@ export default function PreprocessingScreen({ evidence, stages, onRunNoise, onRu
               ))}
               <div className="track-note">
                 <Activity size={14} />
-                Speaker 01 dominates the conversation (58% talk time). Tracks are exported to the comparison module
-                as separate exhibits.
+                Speaker separation generated {displayTracks.length} distinct talker tracks. Tracks are available for individual
+                acoustic-phonetic inspection and comparison.
               </div>
             </div>
           ) : (
             <div className="empty-tracks">
-              {SPEAKER_TRACKS.map((track) => (
+              {displayTracks.map((track) => (
                 <div className="track-card ghost" key={track.id}>
                   <div className="track-head">
                     <span className="track-avatar ghost-avatar">
