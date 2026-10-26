@@ -13,6 +13,7 @@ from ..storage import store_original
 from ..audit import audit
 from ...pipeline.orchestrator import run_pipeline
 import soundfile as sf
+from ...pipeline.audio_util import probe_audio
 
 router = APIRouter(prefix="/evidence", tags=["evidence"])
 ALLOWED = {".wav", ".mp3", ".flac", ".ogg", ".m4a"}
@@ -23,12 +24,7 @@ PIPELINE_EXECUTOR = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
 
 def _probe(path: Path) -> dict:
-    try:
-        io = sf.info(str(path))
-        return {"codec": f"{io.format}/{io.subtype}", "sr": io.samplerate,
-                "ch": io.channels, "dur": io.frames / float(io.samplerate or 1)}
-    except Exception:
-        return {"codec": "unknown", "sr": 0, "ch": 0, "dur": 0.0}
+    return probe_audio(str(path))
 
 
 @router.post("/upload")

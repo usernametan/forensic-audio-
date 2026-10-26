@@ -119,20 +119,21 @@ forensic-audio/
 - **Node.js:** Version 18+ (tested on Node 20 / 24)
 - **Virtual Environment tool:** `python3 -m venv`
 - **Package Managers:** `pip` and `npm`
+- **FFmpeg (Recommended):** Expands codec decoding for `.m4a`, AAC, and non-standard `.mp3` containers (`sudo apt-get install -y ffmpeg libsndfile1`). The pipeline uses `soundfile` for `.wav`, `.flac`, and standard files, automatically falling back to FFmpeg/FFprobe when present.
 
 ---
 
-### Step 1: Install Dependencies
+### Step 1: Install Dependencies (Single Command)
 
-#### Backend Dependencies (from project root):
+To install both frontend and backend dependencies (including bundled static FFmpeg for `.m4a` decoding) in one go:
+
 ```bash
-python3 -m pip install -r backend/requirements.txt
+npm run setup
 ```
 
-#### Frontend Dependencies (from project root):
-```bash
-npm install
-```
+*(Alternatively, you can install individually:*
+- *Backend: `python3 -m pip install -r backend/requirements.txt`*
+- *Frontend: `npm install`)*
 
 ---
 
