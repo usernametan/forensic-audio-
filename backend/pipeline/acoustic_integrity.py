@@ -1,6 +1,6 @@
 """6. VOICE/ACOUSTIC ANALYSIS (Praat/librosa) + 7. INTEGRITY ANALYSIS."""
 import numpy as np
-from .audio_util import load_mono, levels, spectrogram_png
+from .audio_util import load_mono, levels, spectrogram_png, probe_audio
 
 A_MODEL, A_VER = "librosa/praat-parselmouth", "librosa-v1"
 
@@ -24,14 +24,8 @@ def acoustic(wav_path: str, spec_png: str) -> dict:
 
 
 def integrity(original_path: str, processed_path: str) -> dict:
-    import soundfile as sf
     flags: list = []
-    try:
-        io = sf.info(original_path)
-        meta = {"format": io.format, "subtype": io.subtype, "samplerate": io.samplerate,
-                "channels": io.channels, "frames": io.frames}
-    except Exception as e:
-        meta = {"error": str(e)}
+    meta = probe_audio(original_path)
     y, sr = load_mono(processed_path)
     lv = levels(y)
     if lv["clipped_ratio"] > 0.001:
