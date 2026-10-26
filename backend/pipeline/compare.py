@@ -18,6 +18,17 @@ def _mfcc_mean(y: np.ndarray, sr: int, n: int = 20) -> np.ndarray:
 
 
 def _f0_stats(y: np.ndarray, sr: int) -> dict:
+    try:
+        import parselmouth
+        from parselmouth.praat import call
+        snd = parselmouth.Sound(y, sampling_frequency=sr)
+        pitch = snd.to_pitch()
+        m = float(call(pitch, "Get mean", 0, 0, "Hertz") or 0.0)
+        s = float(call(pitch, "Get standard deviation", 0, 0, "Hertz") or 0.0)
+        return {"f0_mean": m, "f0_std": s}
+    except Exception:
+        pass
+
     import librosa
     f0, _, _ = librosa.pyin(y, fmin=50, fmax=500, sr=sr)
     v = f0[~np.isnan(f0)]

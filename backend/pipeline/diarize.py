@@ -33,8 +33,10 @@ def run(wav_path: str) -> dict:
     engine = "energy-vad-fallback"
     segments: list = []
     try:
+        import os
         from pyannote.audio import Pipeline  # type: ignore
-        pipe = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1")
+        hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
+        pipe = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=hf_token)
         ann = pipe(wav_path)
         for k, (turn, _, spk) in enumerate(ann.itertracks(yield_label=True)):
             segments.append({"start": round(turn.start, 2), "end": round(turn.end, 2), "speaker": str(spk)})

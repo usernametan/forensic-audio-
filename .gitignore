@@ -45,3 +45,10 @@ backend/storage/working/*
 !backend/storage/working/.gitkeep
 backend/storage/outputs/*
 !backend/storage/outputs/.gitkeep
+
+# Test & uploaded media fixtures
+src/test/
+*.mp3
+*.m4a
+*.flac
+*.aac
