@@ -32,8 +32,15 @@ echo -e "${GREEN}[✓] Using Python ${PY_VER} (${PYTHON_BIN})${NC}"
 if ! command -v ffmpeg &> /dev/null; then
     echo -e "${YELLOW}[!] FFmpeg is not installed on system PATH.${NC}"
     if command -v apt-get &> /dev/null; then
-        echo -e "${CYAN}Attempting to install ffmpeg via apt-get (requires sudo)...${NC}"
-        sudo apt-get update && sudo apt-get install -y ffmpeg libsndfile1 || echo -e "${YELLOW}Could not install via sudo. Continuing with Python bundled imageio-ffmpeg...${NC}"
+        if [ "$EUID" -eq 0 ]; then
+            echo -e "${CYAN}Running apt-get as root...${NC}"
+            apt-get update && apt-get install -y ffmpeg libsndfile1 || echo -e "${YELLOW}Apt install failed. Continuing...${NC}"
+        elif sudo -n true 2>/dev/null; then
+            echo -e "${CYAN}Running non-interactive sudo apt-get...${NC}"
+            sudo -n apt-get update && sudo -n apt-get install -y ffmpeg libsndfile1 || echo -e "${YELLOW}Apt install failed. Continuing...${NC}"
+        else
+            echo -e "${YELLOW}[!] Sudo password required for apt-get; skipping system package install. Continuing with Python bundled imageio-ffmpeg...${NC}"
+        fi
     elif command -v brew &> /dev/null; then
         echo -e "${CYAN}Installing ffmpeg via Homebrew...${NC}"
         brew install ffmpeg libsndfile || true

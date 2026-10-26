@@ -111,7 +111,7 @@ def build(run_id, evidence, ev_hash, wc_hash, specimens, stages, acoustic,
         stg = s.get("stage", "stage")
         hsh = s.get("sha256", "n/a")
         mod = f"{s.get('model', '')} ({s.get('version', '')})"
-        kv(f"Stage: {stg}", f"{mod} | SHA-256: {hsh[:24]}...")
+        kv(f"Stage: {stg}", f"{mod} | SHA-256: {hsh}")
 
     # 3. Acoustic Analysis
     heading("3. Acoustic-Phonetic Findings")

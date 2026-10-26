@@ -214,10 +214,11 @@ export function exportReportPdf(data) {
   y += 2;
 
   heading('6. Original Transcript');
-  body(`Detected language: ${data.transcript.originalLanguageLabel} · ${data.transcript.sourceFormat}`, {
-    color: [100, 110, 125],
-  });
-  data.transcript.segments.forEach((seg) => {
+  body(
+    `Detected language: ${data?.transcript?.originalLanguageLabel || 'auto'} · ${data?.transcript?.sourceFormat || 'Whisper Automatic Speech Recognition'}`,
+    { color: [100, 110, 125] }
+  );
+  (data?.transcript?.segments || []).forEach((seg) => {
     const txt = seg.tokens ? tokensToText(seg.tokens) : (seg.text || seg.text_src || '');
     bullet(`[${seg.time || '00:00'}] ${seg.speaker || 'SPK'}: ${txt}`);
   });

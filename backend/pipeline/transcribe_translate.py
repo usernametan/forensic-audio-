@@ -95,6 +95,18 @@ def transcribe(wav_path: str, segments: list | None = None) -> dict:
     return {"model": T_MODEL, "version": T_VER, "engine": engine, "segments": texts}
 
 
+_INDIC_MODELS: dict = {}
+
+
+def _get_indictrans(model_name: str = "ai4bharat/indictrans2-indic-en-1B"):
+    if model_name not in _INDIC_MODELS:
+        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer  # type: ignore
+        tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+        model = AutoModelForSeq2SeqLM.from_pretrained(model_name, trust_remote_code=True)
+        _INDIC_MODELS[model_name] = (tokenizer, model)
+    return _INDIC_MODELS[model_name]
+
+
 def _translate_via_api(segments: list, target: str = "en") -> list | None:
     """Optional cloud API translation if API key is provided."""
     groq_key = os.environ.get("GROQ_API_KEY")
@@ -125,10 +137,16 @@ def _translate_via_api(segments: list, target: str = "en") -> list | None:
             end_idx = raw_reply.rfind("]")
             if start_idx != -1 and end_idx != -1:
                 translated_texts = json.loads(raw_reply[start_idx:end_idx+1])
-                return [
-                    {**s, "text_src": s["text"], "text": str(tr)}
-                    for s, tr in zip(segments, translated_texts)
-                ]
+                if isinstance(translated_texts, list):
+                    # Defensively map by index: missing translated entries retain source text to avoid silent dropping
+                    return [
+                        {
+                            **s,
+                            "text_src": s.get("text", ""),
+                            "text": str(translated_texts[i]).strip() if i < len(translated_texts) and str(translated_texts[i]).strip() else s.get("text", "")
+                        }
+                        for i, s in enumerate(segments)
+                    ]
     except Exception:
         pass
     return None
@@ -138,16 +156,23 @@ def translate(segments: list, target: str = "en") -> dict:
     engine = "stub"
     out = []
 
-    # 1. Try local IndicTrans2 if transformers is installed
+    # 1. Try local IndicTrans2 if transformers is installed (cached module-level)
     try:
-        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer  # type: ignore
         model_name = "ai4bharat/indictrans2-indic-en-1B"
-        tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-        model = AutoModelForSeq2SeqLM.from_pretrained(model_name, trust_remote_code=True)
-        inputs = tokenizer([s["text"] for s in segments], return_tensors="pt", padding=True)
+        tokenizer, model = _get_indictrans(model_name)
+        prefix = f"<2{target}> " if target else "<2en> "
+        formatted_inputs = [prefix + s["text"] for s in segments]
+        inputs = tokenizer(formatted_inputs, return_tensors="pt", padding=True, truncation=True)
         gen = model.generate(**inputs, max_length=256)
         translated = tokenizer.batch_decode(gen, skip_special_tokens=True)
-        out = [{**s, "text_src": s["text"], "text": t} for s, t in zip(segments, translated)]
+        out = [
+            {
+                **s,
+                "text_src": s["text"],
+                "text": str(translated[i]).strip() if i < len(translated) and str(translated[i]).strip() else s["text"]
+            }
+            for i, s in enumerate(segments)
+        ]
         engine = "indictrans2-local"
     except Exception:
         # 2. Try API key (Groq / OpenAI) if configured

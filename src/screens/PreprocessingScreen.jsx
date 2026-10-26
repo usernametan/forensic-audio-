@@ -97,7 +97,7 @@ export default function PreprocessingScreen({
         talkTime: `${pct}%`,
         segments: d.count,
         duration: durStr,
-        pitch: acousticMetrics?.f0_mean ? `${Math.round(acousticMetrics.f0_mean - (acousticMetrics.f0_std || 20))} – ${Math.round(acousticMetrics.f0_mean + (acousticMetrics.f0_std || 20))} Hz` : '120 – 165 Hz',
+        pitch: acousticMetrics?.f0_mean ? `${Math.round(acousticMetrics.f0_mean - (acousticMetrics.f0_std || 20))} – ${Math.round(acousticMetrics.f0_mean + (acousticMetrics.f0_std || 20))} Hz (Global F0)` : '120 – 165 Hz (Est.)',
         seed: (idx + 1) * 17,
       };
     });
