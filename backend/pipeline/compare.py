@@ -26,16 +26,22 @@ def _f0_stats(y: np.ndarray, sr: int) -> dict:
     return {"f0_mean": float(v.mean()), "f0_std": float(v.std())}
 
 
+_SPEECHBRAIN_CLF = None
+
+
+def _get_classifier():
+    global _SPEECHBRAIN_CLF
+    if _SPEECHBRAIN_CLF is None:
+        from speechbrain.inference import EncoderClassifier  # type: ignore
+        _SPEECHBRAIN_CLF = EncoderClassifier.from_hparams(source="speechbrain/spkrec-ecapa-voxceleb")
+    return _SPEECHBRAIN_CLF
+
+
 def _embedding(y: np.ndarray, sr: int) -> np.ndarray:
     try:
-        from speechbrain.inference import EncoderClassifier  # type: ignore
-        import torch, soundfile as sf, tempfile, os
-        clf = EncoderClassifier.from_hparams(source="speechbrain/spkrec-ecapa-voxceleb")
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as t:
-            sf.write(t.name, y, sr)
-            name = t.name
+        import torch
+        clf = _get_classifier()
         emb = clf.encode_batch(torch.unsqueeze(torch.tensor(y), 0)).squeeze().detach().numpy()
-        os.unlink(name)
         return emb / (np.linalg.norm(emb) + 1e-12)
     except Exception:
         v = _mfcc_mean(y, sr)

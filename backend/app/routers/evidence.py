@@ -1,9 +1,10 @@
 import json
+import os
 import shutil
-import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from fastapi import APIRouter, UploadFile, File, Form, Depends, BackgroundTasks, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
 from sqlalchemy.orm import Session
 from ..db import get_db
 from .. import models
@@ -15,6 +16,10 @@ import soundfile as sf
 
 router = APIRouter(prefix="/evidence", tags=["evidence"])
 ALLOWED = {".wav", ".mp3", ".flac", ".ogg", ".m4a"}
+
+# Throttled worker pool to prevent resource exhaustion / OOM from unbounded thread creation
+MAX_WORKERS = int(os.environ.get("MAX_PIPELINE_WORKERS", "2"))
+PIPELINE_EXECUTOR = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
 
 def _probe(path: Path) -> dict:
@@ -31,15 +36,32 @@ def upload(evidence: UploadFile = File(...),
            specimens: list[UploadFile] = File(default=[]),
            source: str = Form(default=""), collector: str = Form(default=""),
            questionnaire: str = Form(default="{}"),
-           background_tasks: BackgroundTasks = None,
            db: Session = Depends(get_db)):
+    # Validate main evidence file format
+    ev_ext = Path(evidence.filename).suffix.lower()
+    if ev_ext not in ALLOWED:
+        raise HTTPException(status_code=400,
+                            detail=f"Unsupported file format '{ev_ext}'. Allowed formats: {', '.join(sorted(ALLOWED))}")
+
+    # Validate reference specimens file formats
+    for s in specimens or []:
+        if s.filename:
+            s_ext = Path(s.filename).suffix.lower()
+            if s_ext not in ALLOWED:
+                raise HTTPException(status_code=400,
+                                    detail=f"Unsupported specimen file format '{s_ext}'. Allowed formats: {', '.join(sorted(ALLOWED))}")
+
     safe_name = Path(evidence.filename).name.replace(" ", "_")
     tmp = Path(f"/tmp/{uuid.uuid4().hex[:8]}_{safe_name}")
-    with open(tmp, "wb") as f:
-        shutil.copyfileobj(evidence.file, f)
-    h = sha256_file(tmp)
-    probe = _probe(tmp)
-    dest = store_original(tmp, f"{h[:12]}_{safe_name}")
+    try:
+        with open(tmp, "wb") as f:
+            shutil.copyfileobj(evidence.file, f)
+        h = sha256_file(tmp)
+        probe = _probe(tmp)
+        dest = store_original(tmp, f"{h[:12]}_{safe_name}")
+    finally:
+        tmp.unlink(missing_ok=True)
+
     ev = models.EvidenceFile(kind="evidence", original_filename=evidence.filename,
                              stored_path=str(dest), sha256=h, bytes=dest.stat().st_size,
                              codec=probe["codec"], sample_rate=probe["sr"],
@@ -52,13 +74,18 @@ def upload(evidence: UploadFile = File(...),
           tool="upload", params={"questionnaire": questionnaire[:2000]})
     spec_ids = []
     for s in specimens or []:
+        if not s.filename:
+            continue
         s_safe = Path(s.filename).name.replace(" ", "_")
         t = Path(f"/tmp/{uuid.uuid4().hex[:8]}_{s_safe}")
-        with open(t, "wb") as f:
-            shutil.copyfileobj(s.file, f)
-        sh = sha256_file(t)
-        pr = _probe(t)
-        d = store_original(t, f"{sh[:12]}_{s_safe}")
+        try:
+            with open(t, "wb") as f:
+                shutil.copyfileobj(s.file, f)
+            sh = sha256_file(t)
+            pr = _probe(t)
+            d = store_original(t, f"{sh[:12]}_{s_safe}")
+        finally:
+            t.unlink(missing_ok=True)
         row = models.EvidenceFile(kind="specimen", original_filename=s.filename,
                                   stored_path=str(d), sha256=sh, bytes=d.stat().st_size,
                                   codec=pr["codec"], sample_rate=pr["sr"], channels=pr["ch"],
@@ -70,7 +97,7 @@ def upload(evidence: UploadFile = File(...),
     db.add(run)
     db.commit()
     db.refresh(run)
-    threading.Thread(target=run_pipeline, args=(run.id,), daemon=True).start()
+    PIPELINE_EXECUTOR.submit(run_pipeline, run.id)
     return {"evidence_id": ev.id, "sha256": h, "run_id": run.id, "specimen_ids": spec_ids,
             "filename": ev.original_filename, "duration_s": ev.duration_s, "codec": ev.codec,
             "sample_rate": ev.sample_rate, "channels": ev.channels, "bytes": ev.bytes}

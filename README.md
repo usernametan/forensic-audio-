@@ -181,11 +181,20 @@ To start the full stack including PostgreSQL:
 ```bash
 docker compose up --build
 ```
-- Frontend: `http://localhost:5173`
-- Backend API: `http://localhost:8000`
+- Frontend (SPA via Nginx): `http://localhost:5173`
+- Backend API (FastAPI): `http://localhost:8000`
 - PostgreSQL: `localhost:5432`
 
----
+#### Reverse Proxy Architecture:
+Both the Vite development server (`vite.config.js`) and production Docker container (`nginx.conf`) configure a reverse proxy to route frontend calls to the FastAPI backend without CORS friction:
+- `/evidence/` — Exhibit uploads and metadata retrieval
+- `/pipeline/` — Pipeline execution polling and status checks
+- `/review/` — Examiner review gate (approval/rejection)
+- `/export/` — Section 65B/63 BSA certified HTML and PDF court report generation
+- `/outputs/` — Processed audio extracts and spectrogram visualization PNGs
+- `/health` — Backend health check
+
+If deploying to custom reverse proxies (e.g. Traefik, AWS ALB, Cloudflare), replicate these upstream routes targeting the backend on port 8000 with a `client_max_body_size` of at least `100M` for high-resolution forensic audio exhibits.
 
 ## Laboratory Workflow & Usage Guide
 
@@ -218,4 +227,5 @@ docker compose up --build
 ## Legal & Compliance Notes
 
 1. **Section 65B / Section 63 BSA Admissibility:** Automated algorithms are decision-support tools only. Under Indian law, an electronic record requires certification by a person occupying a responsible official position in relation to the operation of the relevant device.
-2. **Deterministic Fallbacks:** The pipeline utilizes real models when dependencies are present and deterministic acoustic fallbacks (librosa spectral gating, energy VAD, MFCC cosine) when heavy model weights are uninstalled. Fallbacks are explicitly logged in the audit trail and report.
+2. **Deterministic Fallbacks & Heavy Models:** The pipeline utilizes real models when dependencies are present and deterministic acoustic fallbacks (librosa spectral gating, energy VAD, MFCC cosine) when heavy model weights are uninstalled. Fallbacks are explicitly logged in the audit trail and report.
+3. **Translation Stub (IndicTrans2):** Full IndicTrans2 model checkpoints require multi-gigabyte neural weights and dedicated GPU memory. In lightweight CPU deployments and default containers, translation is stubbed with a structured locale mapping prefix (`[<target>] <source_text>`) while maintaining full schema compatibility for court reporting.

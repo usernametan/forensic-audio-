@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   Sparkles,
   AudioWaveform,
@@ -54,6 +55,7 @@ export default function PreprocessingScreen({
   backendConnected,
 }) {
   const [specTab, setSpecTab] = useState('processed');
+  const [audioError, setAudioError] = useState(false);
   const overall = Math.round(
     (stages.noise.progress + stages.enhance.progress + stages.separate.progress) / 3
   );
@@ -180,7 +182,17 @@ export default function PreprocessingScreen({
                 {denoiseMetrics?.snr_proxy_db ? ` · SNR: +${denoiseMetrics.snr_proxy_db.toFixed(1)} dB` : ''}
               </p>
             </div>
-            <audio controls src={`/outputs/${runId}_denoised.wav`} />
+            {audioError ? (
+              <p className="muted small" style={{ fontStyle: 'italic', padding: '8px 12px', background: 'rgba(255,255,255,0.03)', borderRadius: '6px' }}>
+                Audio extract is being processed or temporarily unavailable.
+              </p>
+            ) : (
+              <audio
+                controls
+                src={`/outputs/${runId}_denoised.wav`}
+                onError={() => setAudioError(true)}
+              />
+            )}
           </div>
         )}
 

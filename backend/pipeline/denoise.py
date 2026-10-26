@@ -59,10 +59,12 @@ def run(input_wav: str, out_wav: str) -> dict:
         y2 = _spectral_gate(y, sr)
         save_wav(out_wav, y2, sr)
     before, after = levels(y), levels(y2)
+    n = min(len(y), len(y2))
+    residual = y[:n] - y2[:n]
     return {
         "model": MODEL, "version": VERSION, "engine": engine,
         "params": {"target_sr": sr, "adaptive": True},
         "diagnosis": diagnosis, "before": before, "after": after,
-        "snr_proxy_db": snr_db(y2, (y - y2) if len(y) == len(y2) else y2 * 0),
+        "snr_proxy_db": snr_db(y2[:n], residual),
         "artifact_warning": before["rms"] > 0 and (after["rms"] / (before["rms"] + 1e-9)) < 0.3,
     }

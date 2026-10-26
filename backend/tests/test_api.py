@@ -118,3 +118,34 @@ def test_upload_with_specimen_voice_comparison():
     assert "auto_cosine" in cmp0
     assert "fused_score" in cmp0
     assert "verbal" in cmp0
+
+
+def test_upload_invalid_file_extension():
+    r = client.post("/evidence/upload",
+                    files={"evidence": ("malicious.exe", b"not audio data", "application/octet-stream")})
+    assert r.status_code == 400
+    assert "Unsupported file format" in r.json()["detail"]
+
+
+def test_upload_invalid_specimen_extension():
+    r = client.post("/evidence/upload",
+                    files=[
+                        ("evidence", ("questioned.wav", _wav(300.0, dur=1.0), "audio/wav")),
+                        ("specimens", ("bad_specimen.txt", b"plain text", "text/plain")),
+                    ])
+    assert r.status_code == 400
+    assert "Unsupported specimen file format" in r.json()["detail"]
+
+
+def test_denoise_snr_handles_mismatched_lengths():
+    from backend.pipeline.denoise import run as run_denoise
+    import tempfile, soundfile as sf
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f_in, \
+         tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f_out:
+        in_path, out_path = f_in.name, f_out.name
+    y = np.sin(2 * np.pi * 440 * np.linspace(0, 1, 16000)).astype(np.float32)
+    sf.write(in_path, y, 16000)
+    res = run_denoise(in_path, out_path)
+    assert "snr_proxy_db" in res
+    assert res["snr_proxy_db"] != float("inf")
+
