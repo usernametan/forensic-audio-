@@ -1,0 +1,28 @@
+# ==============================================================================
+# Full Forensic Machine Learning & Neural Pipeline Dependencies (Local Open-Source)
+# ==============================================================================
+
+# 1. PyTorch ecosystem (Torch + Torchaudio)
+torch>=2.1.0
+torchaudio>=2.1.0
+
+# 2. Denoising: DeepFilterNet (state-of-the-art adaptive neural speech enhancement)
+deepfilternet>=0.5.6
+
+# 3. Diarization: pyannote.audio (speaker segmentation, clustering, overlap handling)
+pyannote.audio>=3.1.0
+
+# 4. Voice Comparison: SpeechBrain (ECAPA-TDNN x-vector & speaker embeddings)
+speechbrain>=1.0.0
+
+# 5. Transcription: OpenAI Whisper (multi-lingual ASR with timestamp alignment)
+openai-whisper>=20231117
+
+# 6. Translation & Indic NLP: Transformers, Accelerate, SentencePiece
+transformers>=4.40.0
+accelerate>=0.28.0
+sentencepiece>=0.2.0
+huggingface-hub>=0.22.0
+
+# 7. Acoustic Phonetics: Praat Parselmouth (C++ Praat engine for pitch, formants, jitter/shimmer)
+praat-parselmouth>=0.4.3

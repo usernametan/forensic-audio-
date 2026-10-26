@@ -8,15 +8,30 @@ A_MODEL, A_VER = "librosa/praat-parselmouth", "librosa-v1"
 def acoustic(wav_path: str, spec_png: str) -> dict:
     import librosa
     y, sr = load_mono(wav_path)
-    f0, _, _ = librosa.pyin(y, fmin=50, fmax=500, sr=sr)
-    v = f0[~np.isnan(f0)]
+    model_name = "Praat-Parselmouth"
+    model_ver = "parselmouth-v1"
+    try:
+        import parselmouth
+        from parselmouth.praat import call
+        snd = parselmouth.Sound(wav_path)
+        pitch = snd.to_pitch()
+        f0_mean = float(call(pitch, "Get mean", 0, 0, "Hertz") or 0.0)
+        f0_std = float(call(pitch, "Get standard deviation", 0, 0, "Hertz") or 0.0)
+    except Exception:
+        f0, _, _ = librosa.pyin(y, fmin=50, fmax=500, sr=sr)
+        v = f0[~np.isnan(f0)]
+        f0_mean = float(v.mean()) if len(v) else 0.0
+        f0_std = float(v.std()) if len(v) else 0.0
+        model_name = "librosa/praat-fallback"
+        model_ver = "librosa-v1"
+
     mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13).mean(axis=1).round(3).tolist()
     centroid = float(librosa.feature.spectral_centroid(y=y, sr=sr).mean())
     zcr = float(librosa.feature.zero_crossing_rate(y).mean())
     spectrogram_png(y, sr, spec_png, title="processed spectrogram")
-    return {"model": A_MODEL, "version": A_VER,
-            "f0_mean": round(float(v.mean()) if len(v) else 0.0, 2),
-            "f0_std": round(float(v.std()) if len(v) else 0.0, 2),
+    return {"model": model_name, "version": model_ver,
+            "f0_mean": round(f0_mean, 2),
+            "f0_std": round(f0_std, 2),
             "mfcc_mean13": mfcc, "spectral_centroid": round(centroid, 2),
             "zcr": round(zcr, 5), "levels": levels(y),
             "speaking_rate_proxy": round(float(zcr * 60), 2),

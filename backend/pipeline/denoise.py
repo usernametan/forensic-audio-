@@ -46,9 +46,10 @@ def run(input_wav: str, out_wav: str) -> dict:
     y, sr = load_mono(input_wav)
     diagnosis = detect_problems(y, sr)
     engine = "spectral-gate-fallback"
-    if shutil.which("deepfilternet"):
+    cli = shutil.which("deepfilternet") or shutil.which("deepFilter")
+    if cli:
         try:
-            subprocess.run(["deepfilternet", input_wav, "-o", out_wav],
+            subprocess.run([cli, input_wav, "-o", out_wav],
                            check=True, capture_output=True, timeout=300)
             engine = "deepfilternet-cli"
             y2, _ = load_mono(out_wav)
@@ -56,8 +57,18 @@ def run(input_wav: str, out_wav: str) -> dict:
             y2 = _spectral_gate(y, sr)
             save_wav(out_wav, y2, sr)
     else:
-        y2 = _spectral_gate(y, sr)
-        save_wav(out_wav, y2, sr)
+        try:
+            import df.enhance as dfe
+            import torch
+            model, df_state, _ = dfe.init_df()
+            t_audio = torch.tensor(y).unsqueeze(0)
+            enhanced = dfe.enhance(model, df_state, t_audio)
+            y2 = enhanced.squeeze(0).cpu().numpy()
+            save_wav(out_wav, y2, sr)
+            engine = "deepfilternet-python"
+        except Exception:
+            y2 = _spectral_gate(y, sr)
+            save_wav(out_wav, y2, sr)
     before, after = levels(y), levels(y2)
     n = min(len(y), len(y2))
     residual = y[:n] - y2[:n]

@@ -50,6 +50,7 @@ export default function App() {
   const [reviewData, setReviewData] = useState(null);
   const [isApproved, setIsApproved] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState(TRANSCRIPT);
+  const [liveTranslations, setLiveTranslations] = useState(TRANSLATIONS);
 
   const notify = useToast();
   const timersRef = useRef({});
@@ -178,6 +179,22 @@ export default function App() {
                   })),
                 }));
               }
+
+              // Update live translation segments
+              if (rev.translated && rev.translated.length > 0) {
+                setLiveTranslations((prev) => ({
+                  ...prev,
+                  english: {
+                    ...prev.english,
+                    segments: rev.translated.map((s) => ({
+                      time: `${String(Math.floor(s.start / 60)).padStart(2, '0')}:${String(Math.floor(s.start % 60)).padStart(2, '0')}`,
+                      speaker: s.speaker || 'SPEAKER_00',
+                      tokens: [{ t: s.text }],
+                      raw: s,
+                    })),
+                  },
+                }));
+              }
             } catch (revErr) {
               console.error('Error fetching review data', revErr);
             }
@@ -294,9 +311,16 @@ export default function App() {
 
         const activeRun = uploadRes.run_id;
         setRunId(activeRun);
+        const m = Math.floor((uploadRes.duration_s || 0) / 60);
+        const s = Math.round((uploadRes.duration_s || 0) % 60);
+        const realDur = uploadRes.duration_s ? `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : undefined;
         setEvidence((prev) => ({
           ...(prev || stagedEvidence),
           hash: uploadRes.sha256 || prev?.hash,
+          duration: realDur || prev?.duration,
+          sampleRate: uploadRes.sample_rate ? `${Math.round(uploadRes.sample_rate / 1000)} kHz (${uploadRes.sample_rate} Hz)` : prev?.sampleRate,
+          channels: uploadRes.channels ? (uploadRes.channels === 1 ? '1 (Mono)' : '2 (Stereo)') : prev?.channels,
+          format: uploadRes.codec || prev?.format,
         }));
         startPipelinePolling(activeRun);
       } catch (err) {
@@ -395,7 +419,7 @@ export default function App() {
     activeScreen = (
       <TranscriptionScreen
         transcript={liveTranscript}
-        translations={TRANSLATIONS}
+        translations={liveTranslations}
         language={language}
         setLanguage={setLanguage}
         appliedLanguage={appliedLanguage}
@@ -416,7 +440,7 @@ export default function App() {
         stages={stages}
         comparison={comparison}
         transcript={liveTranscript}
-        translations={TRANSLATIONS}
+        translations={liveTranslations}
         appliedLanguage={appliedLanguage}
         onReturn={handleReturnToDashboard}
         runId={runId}

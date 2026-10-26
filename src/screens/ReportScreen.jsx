@@ -143,6 +143,37 @@ export default function ReportScreen({
     }
   };
 
+  const diarizeMetrics = reviewData?.stages?.diarize?.metrics;
+  const acousticMetrics = reviewData?.stages?.acoustic?.metrics;
+  let displayTracks = SPEAKER_TRACKS;
+  if (diarizeMetrics?.segments?.length) {
+    const spkMap = {};
+    diarizeMetrics.segments.forEach((seg) => {
+      const spk = seg.speaker || 'SPEAKER_00';
+      if (!spkMap[spk]) {
+        spkMap[spk] = { dur: 0, count: 0 };
+      }
+      spkMap[spk].dur += Math.max(0, seg.end - seg.start);
+      spkMap[spk].count += 1;
+    });
+    const totalSpkDur = Object.values(spkMap).reduce((acc, v) => acc + v.dur, 0) || 1;
+    displayTracks = Object.keys(spkMap).map((k) => {
+      const d = spkMap[k];
+      const m = Math.floor(d.dur / 60);
+      const s = Math.round(d.dur % 60);
+      const durStr = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+      const pct = Math.round((d.dur / totalSpkDur) * 100);
+      return {
+        id: k,
+        label: k.replace('SPEAKER_', 'Speaker '),
+        talkTime: `${pct}%`,
+        segments: d.count,
+        duration: durStr,
+        pitch: acousticMetrics?.f0_mean ? `${Math.round(acousticMetrics.f0_mean - (acousticMetrics.f0_std || 20))} – ${Math.round(acousticMetrics.f0_mean + (acousticMetrics.f0_std || 20))} Hz` : '120 – 165 Hz',
+      };
+    });
+  }
+
   return (
     <div className="stack-xl">
       <div className="page-heading no-print">
@@ -389,7 +420,7 @@ export default function ReportScreen({
               </tr>
             </thead>
             <tbody>
-              {SPEAKER_TRACKS.map((t) => (
+              {displayTracks.map((t) => (
                 <tr key={t.id}>
                   <td>
                     <b>

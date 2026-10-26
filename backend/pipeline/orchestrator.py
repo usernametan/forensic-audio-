@@ -32,7 +32,7 @@ def run_pipeline(run_id: str):
     try:
         ev = db.get(models.EvidenceFile, run.evidence_id)
         from ..app.storage import new_working_copy
-        _set(db, run, status="running", current_stage="denoise", progress=5)
+        _set(db, run, status="running", current_stage="denoise", progress=5, error="")
         wc = new_working_copy(Path(ev.stored_path), run_id)
         wch = sha256_file(wc)
         db.add(models.WorkingCopy(evidence_id=ev.id, path=str(wc), sha256=wch, derived_from="original"))
@@ -91,7 +91,7 @@ def run_pipeline(run_id: str):
         _save_stage(db, run_id, "acoustic", spec_proc, ac, ac["model"], ac["version"], {})
         ig = acoustic_integrity.integrity(ev.stored_path, str(den_path))
         _save_stage(db, run_id, "integrity", den_path, ig, ig["model"], ig["version"], {})
-        _set(db, run, current_stage="needs_review", progress=100, status="needs_review")
+        _set(db, run, current_stage="needs_review", progress=100, status="needs_review", error="")
         audit(run_id, ev.id, action="pipeline-complete-needs-review", tool="orchestrator")
     except Exception as e:
         run = db.get(models.PipelineRun, run_id)
