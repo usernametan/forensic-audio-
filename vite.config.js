@@ -33,4 +33,14 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          jspdf: ['jspdf'],
+          html2canvas: ['html2canvas'],
+        },
+      },
+    },
+  },
 });
