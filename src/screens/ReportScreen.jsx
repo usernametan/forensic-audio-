@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Download,
   Printer,
@@ -11,61 +11,91 @@ import {
   CheckCircle2,
   CircleDashed,
   Loader2,
-  Users,
   Award,
+  AlertTriangle,
+  Info,
+  Users,
+  Hash,
+  Database,
 } from 'lucide-react';
-import GlassPanel from '../components/GlassPanel.jsx';
+import Panel from '../components/Panel.jsx';
+import PageHeading from '../components/PageHeading.jsx';
 import StatusBadge from '../components/StatusBadge.jsx';
-import { REPORT_META, STAGE_META, STAGE_ORDER, SPEAKER_TRACKS } from '../data/mockData';
-import { buildReportData, exportReportPdf } from '../utils/pdfExport';
+import CopyButton from '../components/CopyButton.jsx';
 import { useToast } from '../components/Toast.jsx';
+import { PIPELINE_STAGE_DEFINITIONS, REPORT_LIMITATIONS } from '../data/constants';
+import { buildComparisonMetrics } from '../utils/review';
+import { getExportUrl, getOutputUrl } from '../services/api';
+import { exportReportPdf } from '../utils/pdfExport';
+import {
+  formatBytes,
+  formatDuration,
+  formatNumber,
+  formatDateTime,
+  hashPreview,
+} from '../utils/format';
 
-function SegLines({ segments }) {
-  if (!segments || !segments.length) {
-    return <p className="rpt-para muted-line">No speech segments recorded.</p>;
+const LANGUAGE_LABELS = { en: 'English', hi: 'Hindi', mr: 'Marathi' };
+
+function Section({ num, title, children, note }) {
+  return (
+    <section className="rpt-section">
+      <h3 className="rpt-section-title">
+        <span className="rpt-num" aria-hidden="true">{num}</span>
+        {title}
+      </h3>
+      {note && <p className="rpt-note">{note}</p>}
+      {children}
+    </section>
+  );
+}
+
+function ValueOrUnavailable({ value, mono = false }) {
+  if (value === null || value === undefined || value === '') {
+    return <span className="rpt-unavailable">Not returned</span>;
+  }
+  return <span className={mono ? 'rpt-mono' : undefined}>{value}</span>;
+}
+
+function TranscriptLines({ segments, emptyText }) {
+  if (!segments?.length) {
+    return <p className="rpt-para rpt-unavailable">{emptyText}</p>;
   }
   return (
     <div className="rpt-segs">
-      {segments.map((seg, idx) => {
-        const time = seg.time || (typeof seg.start === 'number'
-          ? `${String(Math.floor(seg.start / 60)).padStart(2, '0')}:${String(Math.floor(seg.start % 60)).padStart(2, '0')}`
-          : '00:00');
-        const spk = seg.speaker || 'SPK-01';
-        return (
-          <p className="rpt-seg" key={seg.time || idx}>
-            <span className="rpt-seg-time">{time}</span>
-            <span className={`rpt-seg-spk spk-${spk}`}>{spk}</span>
-            <span>
-              {seg.tokens ? (
-                seg.tokens.map((tok, i) =>
-                  tok.u ? (
-                    <mark className="rpt-uncertain" key={i}>
-                      {tok.u}
-                    </mark>
-                  ) : (
-                    <span key={i}>{tok.t}</span>
-                  )
-                )
-              ) : (
-                <span>{seg.text || seg.text_src || '—'}</span>
-              )}
-            </span>
-          </p>
-        );
-      })}
+      {segments.map((segment, index) => (
+        <p className="rpt-seg" key={segment.id || index}>
+          <span className="rpt-seg-time mono">{formatDuration(segment.start, true)}–{formatDuration(segment.end, true)}</span>
+          <span className={`rpt-seg-spk ${segment.speaker || 'unknown'}`}>{segment.speaker || 'Unlabelled'}</span>
+          <span>{segment.text || '—'}</span>
+        </p>
+      ))}
     </div>
   );
 }
 
-function Section({ num, title, children }) {
+function ReportSpectrogram({ src, title, caption }) {
+  const [failed, setFailed] = useState(false);
+  if (!src) {
+    return <p className="rpt-para rpt-unavailable">{title} is unavailable because no backend run is active.</p>;
+  }
   return (
-    <section className="rpt-section">
-      <h3 className="rpt-section-title">
-        <span className="rpt-num">{num}</span>
-        {title}
-      </h3>
-      {children}
-    </section>
+    <figure className="rpt-spectrogram">
+      {!failed ? (
+        <img
+          src={src}
+          alt={title}
+          loading="lazy"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <div className="rpt-spectrogram-missing">
+          <AlertTriangle size={18} />
+          <span>{title} could not be loaded from the backend output store.</span>
+        </div>
+      )}
+      <figcaption>{failed ? 'Image unavailable — no substitute plot is generated.' : caption}</figcaption>
+    </figure>
   );
 }
 
@@ -73,526 +103,563 @@ export default function ReportScreen({
   caseInfo,
   evidence,
   reference,
-  stages,
+  pipeline,
+  comparisonStatus,
   comparison,
   transcript,
-  translations,
-  appliedLanguage,
+  reviewData,
   onReturn,
   runId,
-  reviewData,
-  backendConnected,
+  backendStatus,
   onApproveRun,
   isApproved,
+  language,
+  sessionStartedAt,
 }) {
   const notify = useToast();
-  const applied = translations[appliedLanguage];
-  const result = comparison.result;
+  const backendApproved = Boolean(isApproved);
+  const contextStale = Boolean(reference?.needsComparison) || (Boolean(comparison) && !reference);
+  const approved = backendApproved && !contextStale;
+  const [examinerName, setExaminerName] = useState(reviewData?.approved_by || caseInfo?.collector || '');
+  const [conclusionText, setConclusionText] = useState(reviewData?.conclusion || '');
+  const [submitting, setSubmitting] = useState(false);
+  const [approvalError, setApprovalError] = useState('');
+  const [exportStatus, setExportStatus] = useState('idle');
+  const [exportError, setExportError] = useState('');
+  const [generatedAt] = useState(() => new Date());
 
-  const [examinerName, setExaminerName] = useState(
-    reviewData?.approved_by || caseInfo?.collector || 'Dr. R. Sharma, Forensic Audio Examiner'
-  );
-  const [conclusionText, setConclusionText] = useState(
-    reviewData?.conclusion ||
-      'Forensic audio examination completed in ordinary course. Auditory and acoustic-phonetic characteristics analyzed. Output verified under chain of custody.'
-  );
-  const [submittingApproval, setSubmittingApproval] = useState(false);
+  const reportId = runId ? `RPT-${runId.toUpperCase()}` : 'RPT-DRAFT';
+  const comparisonMetrics = buildComparisonMetrics(comparison);
+  const diarizeSegments = reviewData?.stages?.diarize?.metrics?.segments || [];
+  const integrity = reviewData?.stages?.integrity?.metrics;
+  const acoustic = reviewData?.stages?.acoustic?.metrics;
+  const denoise = reviewData?.stages?.denoise?.metrics;
+  const workingCopyHash = reviewData?.working_copy?.sha256 || '';
+  const translationLabel = LANGUAGE_LABELS[language] || 'Translation';
+  const translationEngine = reviewData?.stages?.translate?.metrics?.engine || '';
 
-  const approved = isApproved || reviewData?.status === 'approved';
+  const speakerSummary = useMemo(() => {
+    if (!diarizeSegments.length) return [];
+    const grouped = new Map();
+    for (const segment of diarizeSegments) {
+      const speaker = segment.speaker || 'Unlabelled';
+      const existing = grouped.get(speaker) || { speaker, turns: 0, talk: 0 };
+      existing.turns += 1;
+      existing.talk += Math.max(0, Number(segment.end) - Number(segment.start));
+      grouped.set(speaker, existing);
+    }
+    const total = Math.max(...diarizeSegments.map((segment) => Number(segment.end) || 0), 1);
+    return Array.from(grouped.values()).map((row) => ({
+      ...row,
+      share: total ? Math.round((row.talk / total) * 100) : 0,
+    }));
+  }, [diarizeSegments]);
 
-  const handleExport = () => {
+  const stageRows = PIPELINE_STAGE_DEFINITIONS.map((definition) => {
+    const stage = reviewData?.stages?.[definition.key];
+    let status = 'Not returned';
+    if (stage) status = 'Completed';
+    else if (pipeline.currentStage?.toLowerCase().includes(definition.key)) status = 'Running';
+    else if (pipeline.status === 'failed') status = 'Failed / unavailable';
+    return { ...definition, stage, status };
+  });
+
+  const reportData = () => ({
+    meta: {
+      reportId,
+      generatedAt: formatDateTime(generatedAt),
+      examiner: examinerName || 'Not signed',
+      lab: 'Digital Forensics Laboratory',
+      approved,
+      status: contextStale
+        ? 'Draft — staged reference does not match the recorded comparison'
+        : approved
+          ? 'Examiner approved'
+          : 'Draft — examiner review required',
+      caseId: caseInfo.id || 'Not provided',
+      caseTitle: caseInfo.title || 'Not provided',
+    },
+    caseInfo,
+    evidence,
+    reference,
+    reviewData,
+    pipeline,
+    comparison: contextStale ? null : comparison,
+    comparisonStatus: contextStale ? 'stale' : comparisonStatus,
+    transcript,
+    language,
+    translationEngine,
+    limitations: REPORT_LIMITATIONS,
+    conclusion: conclusionText,
+    examinerName,
+    sessionStartedAt,
+    runId,
+  });
+
+  const handleExport = async () => {
+    if (exportStatus === 'exporting') return;
+    setExportStatus('exporting');
+    setExportError('');
     try {
-      const data = buildReportData({
-        caseInfo,
-        evidence,
-        reference,
-        stages,
-        comparison,
-        transcript,
-        translations,
-        appliedLanguage,
-        reportMeta: {
-          ...REPORT_META,
-          examiner: examinerName,
-          reviewStatus: approved ? 'Examiner Approved & Certified' : REPORT_META.reviewStatus,
-        },
-      });
-      exportReportPdf(data);
-      notify('PDF exported — check your downloads folder', 'success');
-    } catch (err) {
-      console.error(err);
-      notify('PDF export failed — use Print Report instead', 'warn');
+      await exportReportPdf(reportData());
+      setExportStatus('done');
+      notify(`Client PDF exported${approved ? '' : ' as a DRAFT'}.`, 'success');
+      window.setTimeout(() => setExportStatus('idle'), 2500);
+    } catch (error) {
+      setExportStatus('error');
+      setExportError(error.message);
+      notify(`PDF export failed: ${error.message}`, 'error');
     }
   };
 
   const handleApprove = async () => {
+    if (submitting) return;
     if (!examinerName.trim()) {
-      notify('Please enter the examiner name before certifying', 'warn');
+      setApprovalError('Enter the examiner name before certification.');
+      notify('Enter the examiner name before certification.', 'warning');
       return;
     }
-    setSubmittingApproval(true);
+    if (!runId || backendStatus !== 'online') {
+      setApprovalError('Examiner certification requires an active backend review run.');
+      notify('Examiner certification requires an active backend review run.', 'error');
+      return;
+    }
+    if (!conclusionText.trim()) {
+      setApprovalError('Enter a conservative conclusion. Do not certify an empty conclusion.');
+      notify('Enter a conservative conclusion before certification.', 'warning');
+      return;
+    }
+    setSubmitting(true);
+    setApprovalError('');
     try {
-      if (onApproveRun) {
-        await onApproveRun({ examiner: examinerName, conclusion: conclusionText });
-      }
-      notify('Report approved & Section 65B/63 Certificate unlocked!', 'success');
-    } catch (err) {
-      notify(`Approval error: ${err.message}`, 'warn');
+      await onApproveRun({ examiner: examinerName.trim(), conclusion: conclusionText.trim() });
+      notify('Examiner approval recorded. The official export endpoints are now available.', 'success');
+    } catch (error) {
+      setApprovalError(error.message);
+      notify(`Approval failed: ${error.message}. The draft has not been certified.`, 'error');
     } finally {
-      setSubmittingApproval(false);
+      setSubmitting(false);
     }
   };
 
-  const diarizeMetrics = reviewData?.stages?.diarize?.metrics;
-  const acousticMetrics = reviewData?.stages?.acoustic?.metrics;
-  let displayTracks = SPEAKER_TRACKS;
-  if (diarizeMetrics?.segments?.length) {
-    const spkMap = {};
-    diarizeMetrics.segments.forEach((seg) => {
-      const spk = seg.speaker || 'SPEAKER_00';
-      if (!spkMap[spk]) {
-        spkMap[spk] = { dur: 0, count: 0 };
-      }
-      spkMap[spk].dur += Math.max(0, seg.end - seg.start);
-      spkMap[spk].count += 1;
-    });
-    const totalSpkDur = Object.values(spkMap).reduce((acc, v) => acc + v.dur, 0) || 1;
-    displayTracks = Object.keys(spkMap).map((k) => {
-      const d = spkMap[k];
-      const m = Math.floor(d.dur / 60);
-      const s = Math.round(d.dur % 60);
-      const durStr = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-      const pct = Math.round((d.dur / totalSpkDur) * 100);
-      return {
-        id: k,
-        label: k.replace('SPEAKER_', 'Speaker '),
-        talkTime: `${pct}%`,
-        segments: d.count,
-        duration: durStr,
-        pitch: acousticMetrics?.f0_mean ? `${Math.round(acousticMetrics.f0_mean - (acousticMetrics.f0_std || 20))} – ${Math.round(acousticMetrics.f0_mean + (acousticMetrics.f0_std || 20))} Hz (Global F0)` : '120 – 165 Hz (Est.)',
-      };
-    });
-  }
-
   return (
     <div className="stack-xl">
-      <div className="page-heading no-print">
-        <div>
-          <p className="eyebrow">Screen 05 · Reporting</p>
-          <h2 className="h1">Forensic Report</h2>
-          <p className="muted">
-            Consolidated court-ready examination report assembled from every module of the analysis pipeline.
-          </p>
-        </div>
-        <div className="heading-badges">
-          {approved ? (
-            <StatusBadge tone="green">
-              <ShieldCheck size={12} /> Certified u/s 65B / 63 BSA
-            </StatusBadge>
+      <PageHeading
+        eyebrow="Step 05 · Reporting"
+        title="Forensic report"
+        description="A formal examination report assembled only from data returned by the backend and values entered by the examiner. Missing data is shown as unavailable rather than filled in."
+        actions={
+          contextStale ? (
+            <StatusBadge tone="warning"><ShieldAlert size={12} /> Re-comparison required</StatusBadge>
+          ) : approved ? (
+            <StatusBadge tone="success"><ShieldCheck size={12} /> Examiner approved</StatusBadge>
           ) : (
-            <StatusBadge tone="amber">
-              <ShieldAlert size={12} /> Pending examiner approval
-            </StatusBadge>
-          )}
-        </div>
-      </div>
+            <StatusBadge tone="warning"><ShieldAlert size={12} /> Draft — approval required</StatusBadge>
+          )
+        }
+      />
 
       <div className="report-actions no-print">
-        {runId && backendConnected && approved && (
+        {approved && runId && backendStatus === 'online' && (
           <>
-            <a
-              href={`/export/${runId}?fmt=pdf`}
-              target="_blank"
-              rel="noreferrer"
-              className="btn btn-primary"
-              style={{ textDecoration: 'none' }}
-            >
-              <Download size={15} /> Download Official PDF Report
+            <a href={getExportUrl(runId, 'pdf')} target="_blank" rel="noreferrer" className="btn btn-primary">
+              <Download size={15} /> Official backend PDF
             </a>
-            <a
-              href={`/export/${runId}?fmt=html`}
-              target="_blank"
-              rel="noreferrer"
-              className="btn btn-secondary"
-              style={{ textDecoration: 'none' }}
-            >
-              <FileText size={15} /> View HTML Report
+            <a href={getExportUrl(runId, 'html')} target="_blank" rel="noreferrer" className="btn btn-secondary">
+              <FileText size={15} /> Official HTML report
             </a>
           </>
         )}
-        <button className="btn btn-secondary" onClick={handleExport}>
-          <Download size={15} /> Export Client PDF
+        <button type="button" className="btn btn-secondary" onClick={handleExport} disabled={exportStatus === 'exporting'}>
+          {exportStatus === 'exporting' ? <Loader2 size={15} className="spin" /> : <Download size={15} />}
+          {exportStatus === 'exporting' ? 'Building client PDF…' : approved ? 'Export client PDF' : 'Export draft client PDF'}
         </button>
-        <button className="btn btn-secondary" onClick={() => window.print()}>
-          <Printer size={15} /> Print Report
+        <button type="button" className="btn btn-secondary" onClick={() => window.print()}>
+          <Printer size={15} /> Print report
         </button>
-        <button className="btn btn-ghost" onClick={onReturn}>
-          <ArrowLeft size={15} /> Return to Dashboard
+        <button type="button" className="btn btn-ghost" onClick={onReturn}>
+          <ArrowLeft size={15} /> Return to workspace
         </button>
-        <span className="muted small report-actions-note">
-          Official court export requires examiner sign-off below
+        <span className="report-actions-note muted small">
+          {approved
+            ? 'Official backend export is unlocked because the run is approved.'
+            : 'Official export remains locked by the backend until examiner approval.'}
         </span>
       </div>
 
-      <article className="report-doc">
-        <div className="rpt-watermark">{approved ? 'COURT REPORT' : 'DRAFT REVIEW'}</div>
+      {contextStale && (
+        <div className="inline-alert warning banner" role="alert">
+          <AlertTriangle size={16} />
+          <div>
+            <strong>A replacement reference is staged but has not been compared</strong>
+            <p>
+              The recorded comparison, if any, belongs to a different reference or its reference record is unavailable. It is withheld from this report. Return to speaker comparison and re-run the comparison; the backend will then reset examiner approval.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {exportError && (
+        <div className="inline-alert error banner" role="alert">
+          <AlertTriangle size={16} />
+          <div><strong>Client PDF export failed</strong><p>{exportError}</p></div>
+        </div>
+      )}
+
+      <article className="report-doc" id="forensic-report-document">
+        <div className={`rpt-watermark ${approved ? 'approved' : ''}`}>{approved ? 'EXAMINER APPROVED' : 'DRAFT'}</div>
 
         <header className="rpt-header">
           <div className="rpt-brand">
-            <span className="rpt-brand-mark">
-              <FileText size={18} />
-            </span>
+            <span className="rpt-brand-mark"><FileText size={18} /></span>
             <div>
-              <h1 className="rpt-brand-title">AUDIO FORENSICS</h1>
+              <h1 className="rpt-brand-title">Audio Forensics</h1>
               <p className="rpt-brand-sub">Digital Forensics Laboratory · Forensic Audio Division</p>
             </div>
           </div>
           <div className="rpt-ids">
-            <p>
-              <span className="rpt-id-key">CASE</span>
-              <span className="rpt-id-val">{caseInfo.id}</span>
-            </p>
-            <p>
-              <span className="rpt-id-key">REPORT</span>
-              <span className="rpt-id-val">{runId ? `RPT-${runId.toUpperCase()}` : REPORT_META.id}</span>
-            </p>
-            <p>
-              <span className="rpt-id-key">GENERATED</span>
-              <span className="rpt-id-val">{REPORT_META.generated}</span>
-            </p>
+            <p><span className="rpt-id-key">Case</span><span className="rpt-id-val">{caseInfo.id || 'Not provided'}</span></p>
+            <p><span className="rpt-id-key">Report</span><span className="rpt-id-val">{reportId}</span></p>
+            <p><span className="rpt-id-key">Generated</span><span className="rpt-id-val">{formatDateTime(generatedAt)}</span></p>
           </div>
         </header>
 
-        {!approved ? (
-          <div className="rpt-demo-banner">
-            <ShieldAlert size={16} />
-            <div>
-              <p className="rpt-demo-title">EXAMINER APPROVAL REQUIRED BEFORE COURT SUBMISSION</p>
-              <p className="rpt-demo-sub">
-                Automated audio processing tools provide decision support only. Certified examiner review, verification of
-                intermediate hashes, and signature are required before export under Section 65B IEA / 63 BSA 2023.
-              </p>
-            </div>
+        <div className={`rpt-status-banner ${approved ? 'approved' : 'draft'}`}>
+          {approved ? <ShieldCheck size={17} /> : <ShieldAlert size={17} />}
+          <div>
+            <p className="rpt-status-title">{approved ? 'EXAMINER APPROVED — REPORT READY FOR EXPORT' : 'DRAFT — EXAMINER REVIEW AND SIGN-OFF REQUIRED'}</p>
+            <p className="rpt-status-sub">
+              {approved
+                ? 'The backend review gate recorded examiner approval. Legal admissibility remains a matter for the court; this system does not itself determine admissibility.'
+                : 'Automated outputs are decision support only. The certificate section remains incomplete until a certified examiner approves the run.'}
+            </p>
           </div>
-        ) : (
-          <div className="rpt-demo-banner" style={{ background: 'rgba(52, 211, 153, 0.08)', borderColor: 'rgba(52, 211, 153, 0.4)' }}>
-            <ShieldCheck size={16} style={{ color: '#34d399' }} />
-            <div>
-              <p className="rpt-demo-title" style={{ color: '#34d399' }}>EXAMINER CERTIFIED · SECTION 65B / 63 BSA ADMISSIBLE</p>
-              <p className="rpt-demo-sub" style={{ color: '#a7f3d0' }}>
-                Examiner approval and cryptographic hashes verified. Admissible as electronic evidence under Section 65B Indian Evidence Act / Section 63 Bharatiya Sakshya Adhiniyam 2023.
-              </p>
-            </div>
-          </div>
-        )}
+        </div>
 
-        <Section num="1" title="Case Reference & Chain of Custody">
+        <Section num="1" title="Case reference & chain of custody">
           <div className="rpt-kv-grid">
-            <div className="rpt-kv">
-              <span className="rpt-kv-key">Case title</span>
-              <span className="rpt-kv-val">{caseInfo.title}</span>
-            </div>
-            <div className="rpt-kv">
-              <span className="rpt-kv-key">Custody source</span>
-              <span className="rpt-kv-val">{caseInfo.source || evidence.source || 'PS Special Cell (exhibit companion)'}</span>
-            </div>
-            <div className="rpt-kv">
-              <span className="rpt-kv-key">Examiner</span>
-              <span className="rpt-kv-val">{examinerName}</span>
-            </div>
-            <div className="rpt-kv">
-              <span className="rpt-kv-key">Review status</span>
-              <span className="rpt-kv-val">{approved ? 'Certified & Approved' : 'Pending Examiner Approval'}</span>
-            </div>
+            <div className="rpt-kv"><span className="rpt-kv-key">Case ID</span><span className="rpt-kv-val">{caseInfo.id || 'Not provided'}</span></div>
+            <div className="rpt-kv"><span className="rpt-kv-key">Case title</span><span className="rpt-kv-val">{caseInfo.title || 'Not provided'}</span></div>
+            <div className="rpt-kv"><span className="rpt-kv-key">Custody source</span><span className="rpt-kv-val">{caseInfo.source || 'Not provided'}</span></div>
+            <div className="rpt-kv"><span className="rpt-kv-key">Seizing / examining officer</span><span className="rpt-kv-val">{caseInfo.collector || 'Not provided'}</span></div>
+            <div className="rpt-kv"><span className="rpt-kv-key">Session opened</span><span className="rpt-kv-val mono">{formatDateTime(sessionStartedAt)}</span></div>
+            <div className="rpt-kv"><span className="rpt-kv-key">Review status</span><span className="rpt-kv-val">{approved ? 'Examiner approved' : runId ? 'Pending examiner approval' : 'No active backend run'}</span></div>
+            <div className="rpt-kv"><span className="rpt-kv-key">Pipeline run</span><span className="rpt-kv-val mono">{runId || 'Not started'}</span></div>
+            <div className="rpt-kv"><span className="rpt-kv-key">Signed examiner</span><span className="rpt-kv-val">{approved ? reviewData?.approved_by || examinerName || 'Not signed' : runId ? 'Pending sign-off' : 'Not signed'}</span></div>
           </div>
         </Section>
 
-        <Section num="2" title="Evidence File Details & SHA-256 Verification">
-          <div className="rpt-two-col">
-            <div className="rpt-file-card">
-              <p className="rpt-file-role">Questioned exhibit</p>
-              <p className="rpt-file-name">{evidence.name}</p>
-              <ul className="rpt-file-meta">
-                <li>
-                  <Fingerprint size={11} /> Ref <b>{evidence.ref}</b>
-                </li>
-                <li>
-                  <Clock3 size={11} /> Duration <b>{evidence.duration}</b>
-                </li>
-                <li>
-                  <FileText size={11} /> Format <b>{evidence.format}</b>
-                </li>
-                <li>
-                  Sample rate <b>{evidence.sampleRate}</b> · Channels <b>{evidence.channels}</b>
-                </li>
-                <li>
-                  SHA-256 <b className="rpt-mono">{evidence.hash}</b>
-                </li>
-                <li>
-                  Captured <b>{evidence.captured}</b>
-                </li>
-              </ul>
-            </div>
-            <div className="rpt-file-card">
-              <p className="rpt-file-role">Reference voice sample</p>
-              <p className="rpt-file-name">{reference.name}</p>
-              <ul className="rpt-file-meta">
-                <li>
-                  <Fingerprint size={11} /> Ref <b>{reference.ref}</b>
-                </li>
-                <li>
-                  <Clock3 size={11} /> Duration <b>{reference.duration}</b>
-                </li>
-                <li>
-                  <FileText size={11} /> Format <b>{reference.format}</b>
-                </li>
-                <li>
-                  Origin <b>{reference.origin}</b>
-                </li>
-                <li>
-                  SHA-256 <b className="rpt-mono">{reference.hash}</b>
-                </li>
-                <li>
-                  Quality / SNR <b>{reference.quality} · {reference.snr || '31.2 dB'}</b>
-                </li>
-              </ul>
-            </div>
-          </div>
+        <Section num="2" title="Evidence file details & SHA-256 verification">
+          {!evidence ? (
+            <p className="rpt-para rpt-unavailable">No evidence file is registered in this session.</p>
+          ) : (
+            <>
+              <div className="rpt-two-col">
+                <div className="rpt-file-card">
+                  <p className="rpt-file-role">Questioned exhibit</p>
+                  <p className="rpt-file-name">{evidence.name}</p>
+                  <ul className="rpt-file-meta">
+                    <li><Fingerprint size={11} /> Reference <b>{evidence.ref || 'Not assigned'}</b></li>
+                    <li><Clock3 size={11} /> Duration <b>{evidence.duration || 'Not returned'}</b></li>
+                    <li><FileText size={11} /> Format <b>{evidence.format || 'Not returned'}</b></li>
+                    <li><Database size={11} /> Backend evidence ID <b>{evidence.backendId || 'Not returned'}</b></li>
+                    <li><Hash size={11} /> File size <b>{formatBytes(evidence.bytes)}</b></li>
+                    <li><Fingerprint size={11} /> <span className="rpt-meta-label">SHA-256</span> <b className="rpt-mono break">{evidence.hash || 'Not available'}</b></li>
+                  </ul>
+                  {evidence.hash && (
+                    <CopyButton value={evidence.hash} label="Copy hash" className="no-print" />
+                  )}
+                </div>
+                <div className="rpt-file-card">
+                  <p className="rpt-file-role">Reference specimen</p>
+                  {reference ? (
+                    <>
+                      <p className="rpt-file-name">{reference.name}</p>
+                      <ul className="rpt-file-meta">
+                        <li><Fingerprint size={11} /> Reference <b>{reference.ref || 'Not assigned'}</b></li>
+                        <li><Clock3 size={11} /> Duration <b>{reference.duration || 'Not returned'}</b></li>
+                        <li><FileText size={11} /> Format <b>{reference.format || 'Not returned'}</b></li>
+                        <li><Database size={11} /> Backend specimen ID <b>{reference.backendId || 'Not returned'}</b></li>
+                        <li><Fingerprint size={11} /> <span className="rpt-meta-label">SHA-256</span> <b className="rpt-mono break">{reference.hash || 'Not available'}</b></li>
+                      </ul>
+                      {reference.hash && <CopyButton value={reference.hash} label="Copy hash" className="no-print" />}
+                    </>
+                  ) : (
+                    <p className="rpt-para rpt-unavailable">No reference specimen was supplied. Voice comparison was not performed.</p>
+                  )}
+                </div>
+              </div>
+              {reference?.needsComparison && (
+                <p className="inline-alert warning">
+                  <AlertTriangle size={14} /> This replacement reference has not been compared. The report will not attach a comparison result until the backend comparison is re-run.
+                </p>
+              )}
+              <div className="rpt-kv-grid">
+                <div className="rpt-kv rpt-span">
+                  <span className="rpt-kv-key">Working copy SHA-256</span>
+                  <span className="rpt-kv-val mono break">{workingCopyHash || 'Not returned'}</span>
+                </div>
+              </div>
+              <p className="rpt-note">
+                The evidence SHA-256 shown is the value returned by the backend on receipt, not the browser preview value. The working-copy digest and stage output hashes are returned by the backend; unavailable values are not invented.
+              </p>
+            </>
+          )}
         </Section>
 
-        <Section num="3" title="Audio Preprocessing & Enhancement Steps">
+        <Section num="3" title="Preprocessing, models & intermediate hashes">
           <table className="rpt-table">
             <thead>
-              <tr>
-                <th>#</th>
-                <th>Stage</th>
-                <th>Configuration / Model</th>
-                <th>Status</th>
-              </tr>
+              <tr><th>Stage</th><th>Model / version</th><th>Output SHA-256</th><th>Status</th></tr>
             </thead>
             <tbody>
-              {STAGE_ORDER.map((key, i) => {
-                const stage = stages[key];
-                const meta = STAGE_META[key];
-                return (
-                  <tr key={key}>
-                    <td>{i + 1}</td>
-                    <td>
-                      <b>{meta.label}</b>
-                    </td>
-                    <td>{meta.detail}</td>
-                    <td>
-                      <span className={`rpt-status ${stage.status}`}>
-                        {stage.status === 'complete' ? (
-                          <>
-                            <CheckCircle2 size={11} /> Complete ({stage.progress}%)
-                          </>
-                        ) : stage.status === 'running' ? (
-                          <>
-                            <Loader2 size={11} className="spin" /> Running ({stage.progress}%)
-                          </>
-                        ) : (
-                          <>
-                            <CircleDashed size={11} /> Pending
-                          </>
-                        )}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </Section>
-
-        <Section num="4" title="Speaker Separation & Diarization Summary">
-          <p className="rpt-para">
-            Voice-activity and diarization partitioned the recording into distinct speaker tracks:
-          </p>
-          <table className="rpt-table">
-            <thead>
-              <tr>
-                <th>Track</th>
-                <th>Active duration</th>
-                <th>Talk time</th>
-                <th>Segments</th>
-                <th>Pitch band</th>
-              </tr>
-            </thead>
-            <tbody>
-              {displayTracks.map((t) => (
-                <tr key={t.id}>
+              {stageRows.map((row) => (
+                <tr key={row.key}>
+                  <td><b>{row.label}</b></td>
                   <td>
-                    <b>
-                      {t.label} ({t.id})
-                    </b>
+                    {row.stage?.model || row.modelHint}
+                    {row.stage?.version ? ` · ${row.stage.version}` : ''}
                   </td>
-                  <td className="rpt-mono">{t.duration}</td>
-                  <td className="rpt-mono">{t.talkTime}</td>
-                  <td className="rpt-mono">{t.segments}</td>
-                  <td className="rpt-mono">{t.pitch}</td>
+                  <td className="rpt-mono small break">{row.stage?.sha256 ? hashPreview(row.stage.sha256, 16, 12) : 'Not returned'}</td>
+                  <td>
+                    <span className={`rpt-status ${row.status === 'Completed' ? 'complete' : row.status === 'Running' ? 'running' : 'pending'}`}>
+                      {row.status === 'Completed' ? <CheckCircle2 size={11} /> : row.status === 'Running' ? <Loader2 size={11} className="spin" /> : <CircleDashed size={11} />}
+                      {row.status}
+                    </span>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          <p className="rpt-note">Stage output hashes are listed above and the working-copy hash is recorded in Section 2. The full immutable audit trail remains in backend storage; unavailable values are not invented here.</p>
         </Section>
 
-        <Section num="5" title="Comparison Methodology & Speaker Verification">
-          <p className="rpt-para">
-            <b>Methodology.</b> Combined acoustic-phonetic (F0 pitch, formants, MFCC distance) and automated
-            deep speaker embedding cosine similarity (ECAPA-TDNN).
-          </p>
-          {result ? (
-            <>
-              <table className="rpt-table">
-                <thead>
-                  <tr>
-                    <th>Metric / Index</th>
-                    <th>Score</th>
-                    <th>Interpretation Band</th>
+        <Section num="4" title="Speaker separation & diarization summary">
+          {speakerSummary.length ? (
+            <table className="rpt-table">
+              <thead><tr><th>Speaker</th><th>Segments</th><th>Active speech</th><th>Share of timeline</th></tr></thead>
+              <tbody>
+                {speakerSummary.map((row) => (
+                  <tr key={row.speaker}>
+                    <td><b>{row.speaker}</b></td>
+                    <td className="rpt-mono">{row.turns}</td>
+                    <td className="rpt-mono">{formatDuration(row.talk)}</td>
+                    <td className="rpt-mono">{row.share}%</td>
                   </tr>
-                </thead>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p className="rpt-para rpt-unavailable">No diarization segments were returned for this run.</p>
+          )}
+          <p className="rpt-note">Overlapping speech, telephonic bandwidth and short utterances can reduce diarization reliability. Speaker labels are machine cluster labels, not identities.</p>
+        </Section>
+
+        <Section num="5" title="Acoustic, signal & integrity findings">
+          <div className="rpt-two-col">
+            <div>
+              <p className="rpt-subhead">Signal measurements</p>
+              {acoustic || denoise ? (
+                <ul className="rpt-bullets">
+                  {denoise && <li>Denoise engine: <b>{denoise.engine || 'Not returned'}</b>; SNR proxy: <b>{formatNumber(denoise.snr_proxy_db, 2)} dB</b>.</li>}
+                  {denoise?.before && <li>RMS before/after: <b>{formatNumber(denoise.before.rms, 4)} / {formatNumber(denoise.after?.rms, 4)}</b>; peak before/after: <b>{formatNumber(denoise.before.peak, 4)} / {formatNumber(denoise.after?.peak, 4)}</b>.</li>}
+                  {denoise?.before && <li>Clipping ratio before/after: <b>{formatNumber(Number(denoise.before.clipped_ratio) * 100, 3)}% / {formatNumber(Number(denoise.after?.clipped_ratio) * 100, 3)}%</b>.</li>}
+                  {acoustic && <li>Mean F0: <b>{formatNumber(acoustic.f0_mean, 1)} Hz</b>; F0 SD: <b>{formatNumber(acoustic.f0_std, 1)} Hz</b>.</li>}
+                  {acoustic && <li>Spectral centroid: <b>{formatNumber(acoustic.spectral_centroid, 1)} Hz</b>; zero-crossing rate: <b>{formatNumber(acoustic.zcr, 5)}</b>.</li>}
+                </ul>
+              ) : (
+                <p className="rpt-para rpt-unavailable">No acoustic measurements were returned.</p>
+              )}
+            </div>
+            <div>
+              <p className="rpt-subhead">Integrity flags</p>
+              {integrity?.flags?.length ? (
+                <ul className="rpt-bullets warning-list">
+                  {integrity.flags.map((flag) => <li key={flag}>{flag}</li>)}
+                </ul>
+              ) : (
+                <p className="rpt-para rpt-unavailable">No integrity flags were returned.</p>
+              )}
+              {integrity?.metadata && (
+                <p className="rpt-note">
+                  Container probe: {integrity.metadata.codec || 'unknown'} · {integrity.metadata.sr || '—'} Hz · {integrity.metadata.ch || '—'} channels.
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="rpt-spectrograms">
+            <ReportSpectrogram
+              src={runId ? getOutputUrl(`${runId}_spec_original.png`) : ''}
+              title="Original spectrogram"
+              caption="Backend-rendered spectrogram of the preserved working copy, before enhancement."
+            />
+            <ReportSpectrogram
+              src={runId ? getOutputUrl(`${runId}_spec_processed.png`) : ''}
+              title="Processed spectrogram"
+              caption="Backend-rendered spectrogram of the denoised working audio used for downstream analysis."
+            />
+          </div>
+        </Section>
+
+        <Section num="6" title="Speaker comparison">
+          {comparison && comparisonStatus !== 'error' && !contextStale ? (
+            <>
+              <p className="rpt-para">
+                <b>Model:</b> {comparison.model} {comparison.version ? `(${comparison.version})` : ''}. <b>Method:</b> {comparison.method || 'Not returned'}.
+              </p>
+              <table className="rpt-table">
+                <thead><tr><th>Measured output</th><th>Value</th><th>Scale</th></tr></thead>
                 <tbody>
-                  {result.metrics.map((m) => (
-                    <tr key={m.name}>
-                      <td>{m.name}</td>
-                      <td className="rpt-mono">{m.value.toFixed(2)}</td>
-                      <td>acoustic-phonetic</td>
+                  {comparisonMetrics.map((metric) => (
+                    <tr key={metric.key}>
+                      <td>{metric.label}</td>
+                      <td className="rpt-mono"><b>{metric.display}</b></td>
+                      <td>{metric.scale}</td>
                     </tr>
                   ))}
-                  <tr className="rpt-highlight-row">
-                    <td>
-                      <b>Composite Forensic Index</b>
-                    </td>
-                    <td className="rpt-mono">
-                      <b>{result.composite.toFixed(2)}</b>
-                    </td>
-                    <td>
-                      <b>{result.verdictBand}</b>
-                    </td>
-                  </tr>
                 </tbody>
               </table>
               <div className="rpt-alert">
-                <b>Decision Support Statement:</b> {result.verdictBand}. State only what the acoustic examination supports.
+                <b>Pipeline verbal output:</b> {comparison.verbal || 'Not returned.'}
               </div>
+              <p className="rpt-note">
+                These are measured similarity outputs, not probabilities that the same person produced both recordings. {comparison.verdictDisclaimer || 'Examiner interpretation is required.'}
+              </p>
             </>
           ) : (
-            <div className="rpt-alert">Comparison module was not run for this exhibit.</div>
+            <p className="rpt-para rpt-unavailable">
+              {contextStale
+                ? 'A replacement reference is staged. The previous comparison is withheld until the comparison is re-run.'
+                : comparisonStatus === 'error'
+                  ? 'The comparison operation failed; no score is reported.'
+                  : 'Speaker comparison was not performed for this run.'}
+            </p>
           )}
         </Section>
 
-        <Section num="6" title={`Original Transcript (${transcript.originalLanguageLabel || 'Source'})`}>
-          <p className="rpt-para muted-line">
-            Speaker-aligned Whisper draft · Original language
+        <Section num="7" title={`Original transcript${reviewData?.stages?.transcribe?.metrics?.language ? ` (${reviewData.stages.transcribe.metrics.language})` : ''}`}>
+          <p className="rpt-note">
+            ASR model: {transcript.transcribeStage?.model || 'Not returned'} {transcript.transcribeStage?.version || ''} · Engine: {transcript.transcribeStage?.metrics?.engine || 'Not returned'}
           </p>
-          <SegLines segments={transcript.segments} />
+          <TranscriptLines segments={transcript.original} emptyText="No transcript segments were returned for this run." />
         </Section>
 
-        <Section num="7" title={`Translation (${applied.label})`}>
-          {applied.note && <p className="rpt-para muted-line">{applied.note}</p>}
-          <SegLines segments={applied.segments} />
+        <Section num="8" title={`Translation — ${translationLabel}`}>
+          <p className="rpt-note">
+            Engine: {translationEngine || 'Not run'}. Machine translation is not a certified translation and must be checked against the source audio.
+            {translationEngine === 'stub' && ' The backend reported a documented fallback stub; the output is not a validated translation.'}
+          </p>
+          <TranscriptLines segments={transcript.translated} emptyText="No translated segments are available." />
         </Section>
 
-        <Section num="8" title="Forensic Limitations & Technical Notes">
+        <Section num="9" title="Limitations & technical notes">
           <ul className="rpt-bullets">
-            {REPORT_META.limitations.map((l) => (
-              <li key={l}>{l}</li>
-            ))}
+            {REPORT_LIMITATIONS.map((limitation) => <li key={limitation}>{limitation}</li>)}
           </ul>
         </Section>
 
-        <Section num="9" title="Examiner Review & Conclusion">
-          <div className="rpt-kv-grid">
-            <div className="rpt-kv">
-              <span className="rpt-kv-key">Examiner name</span>
-              <span className="rpt-kv-val">{examinerName}</span>
+        <Section num="10" title="Examiner review & conclusion">
+          {contextStale ? (
+            <div className="inline-alert warning banner">
+              <ShieldAlert size={18} />
+              <div>
+                <strong>Approval is blocked while the staged reference is unexamined</strong>
+                <p>Return to the comparison workspace and re-run the comparison. Any prior backend approval will be invalidated, and a fresh examiner approval will be required.</p>
+              </div>
             </div>
-            <div className="rpt-kv">
-              <span className="rpt-kv-key">Certification status</span>
-              <span className="rpt-kv-val">{approved ? 'Certified & Signed' : 'Awaiting Sign-off'}</span>
+          ) : approved ? (
+            <div className="rpt-kv-grid">
+              <div className="rpt-kv"><span className="rpt-kv-key">Examiner</span><span className="rpt-kv-val">{reviewData?.approved_by || examinerName}</span></div>
+              <div className="rpt-kv"><span className="rpt-kv-key">Status</span><span className="rpt-kv-val">Approved by backend review gate</span></div>
+              <div className="rpt-kv rpt-span"><span className="rpt-kv-key">Conclusion</span><span className="rpt-kv-val">{reviewData?.conclusion || conclusionText || 'Not recorded'}</span></div>
             </div>
-            <div className="rpt-kv" style={{ gridColumn: '1 / -1' }}>
-              <span className="rpt-kv-key">Examiner conclusion</span>
-              <span className="rpt-kv-val">{conclusionText}</span>
+          ) : (
+            <div className="approval-form no-print">
+              <p className="label-strong small">
+                <Award size={15} /> Examiner approval gate
+              </p>
+              <p className="field-help">
+                Approval requires an active backend run. The backend records the examiner action and unlocks official export only after approval.
+              </p>
+              <label className="field">
+                <span className="field-label">Examiner full name & title</span>
+                <input
+                  className="input"
+                  value={examinerName}
+                  onChange={(event) => setExaminerName(event.target.value)}
+                  placeholder="Full name and professional designation"
+                  autoComplete="name"
+                />
+              </label>
+              <label className="field">
+                <span className="field-label">Conservative forensic conclusion</span>
+                <textarea
+                  className="input"
+                  rows={4}
+                  value={conclusionText}
+                  onChange={(event) => setConclusionText(event.target.value)}
+                  placeholder="State only what the supported examination findings establish. Avoid identification claims not supported by the measured outputs."
+                />
+              </label>
+              {approvalError && (
+                <p className="inline-alert error" role="alert"><AlertTriangle size={14} /> {approvalError}</p>
+              )}
+              <div className="btn-row">
+                <button type="button" className="btn btn-primary" onClick={handleApprove} disabled={submitting}>
+                  {submitting ? <Loader2 size={15} className="spin" /> : <ShieldCheck size={15} />}
+                  {submitting ? 'Recording approval…' : 'Approve & certify report'}
+                </button>
+                {(!runId || backendStatus !== 'online') && (
+                  <span className="muted small">Backend run and connection required.</span>
+                )}
+              </div>
             </div>
-          </div>
-
-          {/* Examiner approval form (visible in review phase) */}
-          <div className="approval-form no-print">
-            <p className="label-strong small">
-              <Award size={15} style={{ verticalAlign: 'middle', marginRight: 6 }} />
-              Certified Examiner Approval Gate (Required for Court Certificate)
-            </p>
-            <label className="field">
-              <span className="field-label">Examiner Full Name & Title</span>
-              <input
-                className="input"
-                value={examinerName}
-                onChange={(e) => setExaminerName(e.target.value)}
-                placeholder="Dr. Full Name, Certified Forensic Audio Examiner"
-              />
-            </label>
-            <label className="field">
-              <span className="field-label">Conservative Forensic Conclusion</span>
-              <textarea
-                className="input"
-                rows={3}
-                value={conclusionText}
-                onChange={(e) => setConclusionText(e.target.value)}
-                placeholder="Enter conservative, legally admissible conclusion..."
-              />
-            </label>
-            <div className="btn-row">
-              <button
-                className="btn btn-primary"
-                onClick={handleApprove}
-                disabled={submittingApproval}
-              >
-                {submittingApproval ? <Loader2 size={15} className="spin" /> : <ShieldCheck size={15} />}
-                {approved ? 'Update Approval & Certificate' : 'Approve & Certify Report (Section 65B / 63 BSA)'}
-              </button>
-            </div>
-          </div>
+          )}
         </Section>
 
-        {/* Section 10: Section 65B Indian Evidence Act / Section 63 BSA 2023 */}
-        <Section num="10" title="Certificate under Section 65B Indian Evidence Act / Section 63 BSA 2023">
-          <div className="court-cert-box">
+        <Section num="11" title="Certificate under Section 65B Indian Evidence Act / Section 63 BSA 2023">
+          <div className={`court-cert-box ${approved ? 'approved' : 'draft'}`}>
             <div className="court-cert-title">
-              <Award size={16} /> Certificate of Electronic Record Admissibility
+              <Award size={16} /> Certificate of Electronic Record Admissibility — template and certification fields
             </div>
-            <p className="rpt-para" style={{ fontSize: '11px', lineHeight: 1.6 }}>
-              <b>Part-A (Hash & Integrity Verification):</b> I hereby certify that the electronic record marked as Exhibit{' '}
-              <b>{evidence.ref}</b> ({evidence.name}) was hashed immediately upon receipt with SHA-256 hash value{' '}
-              <span className="rpt-mono">{evidence.hash}</span>. The original record was preserved read-only without
-              modification. All filtering and acoustic analysis were performed on verified working copies.
+            <p className="rpt-para">
+              <b>Part-A (hash & integrity verification):</b> The electronic record marked Exhibit <b>{evidence?.ref || 'Not assigned'}</b>
+              {evidence?.name ? ` (${evidence.name})` : ''} was hashed by the backend on receipt. The recorded SHA-256 value is{' '}
+              <span className="rpt-mono break">{evidence?.hash || 'not available'}</span>. The working-copy SHA-256 is{' '}
+              <span className="rpt-mono break">{workingCopyHash || 'not available'}</span>. The original is preserved read-only; processing was performed on working copies.
+              Stage output hashes are listed in Section 3 where returned by the API.
             </p>
-            <p className="rpt-para" style={{ fontSize: '11px', lineHeight: 1.6 }}>
-              <b>Part-B (System & Ordinary Course Certification):</b> I, <b>{examinerName}</b>, certify that this electronic
-              output was produced by the automated forensic computer system during the period over which the computer was
-              used regularly to store or process information in ordinary course. The system was operating properly throughout,
-              and an immutable cryptographically-hashed audit log has been maintained for every operation.
+            <p className="rpt-para">
+              <b>Part-B (system & ordinary course certification):</b> I, <b>{approved ? reviewData?.approved_by || examinerName : 'Examiner not yet signed'}</b>, certify that this electronic output was produced by the forensic audio system in the ordinary course, that the system was operating properly, and that an immutable audit log was maintained for the operations recorded by the backend.
             </p>
-            <div className="rpt-kv-grid" style={{ marginTop: '12px' }}>
-              <div className="rpt-kv">
-                <span className="rpt-kv-key">Certifying Examiner</span>
-                <span className="rpt-kv-val">{examinerName}</span>
-              </div>
-              <div className="rpt-kv">
-                <span className="rpt-kv-key">Date & Seal</span>
-                <span className="rpt-kv-val">{REPORT_META.generated}</span>
-              </div>
+            <div className="rpt-kv-grid">
+              <div className="rpt-kv"><span className="rpt-kv-key">Certifying examiner</span><span className="rpt-kv-val">{approved ? reviewData?.approved_by || examinerName : 'Pending approval'}</span></div>
+              <div className="rpt-kv"><span className="rpt-kv-key">Certificate status</span><span className="rpt-kv-val">{approved ? 'Examiner approved — certificate fields recorded' : 'Draft — not certified'}</span></div>
+              <div className="rpt-kv"><span className="rpt-kv-key">Date</span><span className="rpt-kv-val mono">{formatDateTime(generatedAt)}</span></div>
+              <div className="rpt-kv"><span className="rpt-kv-key">Signature line</span><span className="rpt-kv-val">______________________________</span></div>
             </div>
+            <p className="rpt-note">
+              This system records the certificate fields and examiner actions; it does not itself establish legal admissibility. That determination remains with the court.
+            </p>
           </div>
         </Section>
 
         <footer className="rpt-footer">
-          <p>
-            Forensic Audio Examination Suite · Certified Report · {REPORT_META.generated}
-          </p>
+          <p>Audio Forensics examination report · {reportId} · {approved ? 'Examiner approved' : 'Draft'}</p>
+          <p>Decision-support system · generated from backend outputs and examiner-entered fields</p>
         </footer>
       </article>
+
+      <div className="report-footer-actions no-print">
+        {!approved && (
+          <p className="inline-alert warning">
+            <Info size={14} /> The report is a draft. Certify it above before using the official backend export.
+          </p>
+        )}
+        <button type="button" className="btn btn-secondary" onClick={handleExport}>
+          <Download size={15} /> {approved ? 'Export client PDF' : 'Export draft client PDF'}
+        </button>
+      </div>
     </div>
   );
 }

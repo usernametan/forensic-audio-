@@ -1,18 +1,17 @@
 import json
 import os
-import shutil
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
 from sqlalchemy.orm import Session
+from ..config import settings
 from ..db import get_db
 from .. import models
 from ..hashutil import sha256_file
 from ..storage import store_original
 from ..audit import audit
 from ...pipeline.orchestrator import run_pipeline
-import soundfile as sf
 from ...pipeline.audio_util import probe_audio
 
 router = APIRouter(prefix="/evidence", tags=["evidence"])
@@ -25,6 +24,24 @@ PIPELINE_EXECUTOR = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
 def _probe(path: Path) -> dict:
     return probe_audio(str(path))
+
+
+def _copy_upload(upload: UploadFile, dest: Path) -> None:
+    """Stream an upload to disk while enforcing the configured size limit."""
+    limit = settings.max_upload_mb * 1024 * 1024
+    total = 0
+    with open(dest, "wb") as handle:
+        while True:
+            chunk = upload.file.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > limit:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File exceeds the {settings.max_upload_mb} MB upload limit.",
+                )
+            handle.write(chunk)
 
 
 @router.post("/upload")
@@ -50,8 +67,7 @@ def upload(evidence: UploadFile = File(...),
     safe_name = Path(evidence.filename).name.replace(" ", "_")
     tmp = Path(f"/tmp/{uuid.uuid4().hex[:8]}_{safe_name}")
     try:
-        with open(tmp, "wb") as f:
-            shutil.copyfileobj(evidence.file, f)
+        _copy_upload(evidence, tmp)
         h = sha256_file(tmp)
         probe = _probe(tmp)
         dest = store_original(tmp, f"{h[:12]}_{safe_name}")
@@ -75,8 +91,7 @@ def upload(evidence: UploadFile = File(...),
         s_safe = Path(s.filename).name.replace(" ", "_")
         t = Path(f"/tmp/{uuid.uuid4().hex[:8]}_{s_safe}")
         try:
-            with open(t, "wb") as f:
-                shutil.copyfileobj(s.file, f)
+            _copy_upload(s, t)
             sh = sha256_file(t)
             pr = _probe(t)
             d = store_original(t, f"{sh[:12]}_{s_safe}")
