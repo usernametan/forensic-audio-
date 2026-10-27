@@ -35,7 +35,7 @@ The platform provides an end-to-end laboratory workflow: exhibit intake, cryptog
   - Vite 5 (Bundler & dev server with reverse proxy)
   - Lucide React (Forensic & laboratory iconography)
   - jsPDF (Client-side report assembly)
-  - Custom Vanilla CSS Design System (Dark glassmorphism, responsive waveforms, interactive spectrogram viewers)
+  - Custom Vanilla CSS design system (warm forensic palette, charcoal workstation sidebar, responsive waveforms, interactive spectrogram viewers)
 - **Backend:**
   - Python 3.11+
   - FastAPI (REST API with async pipeline orchestration)
@@ -86,9 +86,9 @@ forensic-audio/
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── src/
-│   ├── components/            # Header, Sidebar, FlowStepper, Waveform, GlassPanel
+│   ├── components/            # App shell, workflow stepper, panels, audio & signal views
 │   ├── data/
-│   │   └── mockData.js        # Baseline forensic schemas & fallback data
+│   │   └── constants.js       # Screen keys, stage definitions, upload rules, limitations
 │   ├── screens/
 │   │   ├── DashboardScreen.jsx     # Case intake & evidence registration
 │   │   ├── PreprocessingScreen.jsx # Denoising, spectrograms, audio player, tracks

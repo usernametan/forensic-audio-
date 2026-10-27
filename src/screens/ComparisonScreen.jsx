@@ -1,306 +1,450 @@
 import { useRef, useState } from 'react';
 import {
   FileAudio,
-  FolderOpen,
-  Play,
+  PlayCircle,
   Loader2,
   ScanLine,
   ShieldAlert,
   ChevronRight,
   Gauge,
   Waves,
+  AlertTriangle,
   CheckCircle2,
+  UploadCloud,
+  RefreshCw,
+  Info,
 } from 'lucide-react';
-import GlassPanel from '../components/GlassPanel.jsx';
+import Panel from '../components/Panel.jsx';
+import PageHeading from '../components/PageHeading.jsx';
 import StatusBadge from '../components/StatusBadge.jsx';
-import Waveform from '../components/Waveform.jsx';
+import AudioWaveform from '../components/AudioWaveform.jsx';
+import AudioPlayer from '../components/AudioPlayer.jsx';
+import MetaList from '../components/MetaList.jsx';
+import EmptyState from '../components/EmptyState.jsx';
 import ProgressBar from '../components/ProgressBar.jsx';
 import { useToast } from '../components/Toast.jsx';
-import { EXAMPLE_REFERENCE } from '../data/mockData';
+import useObjectUrl from '../hooks/useObjectUrl';
+import { computeSHA256 } from '../services/api';
+import { decodeAudioSource } from '../utils/audioAnalysis';
+import { validateAudioFile, formatFileType } from '../utils/files';
+import { formatBytes, formatChannels, formatDuration, formatDateTime, formatNumber, formatSampleRate } from '../utils/format';
+import { buildComparisonMetrics } from '../utils/review';
 
-function SampleCard({ role, tone, sample, color, inputRef }) {
+function SamplePanel({ role, tone, sample, color, source, onChoose, chooseLabel = 'Choose file' }) {
+  const objectUrl = useObjectUrl(sample?.file);
   return (
-    <GlassPanel
+    <Panel
+      icon={<FileAudio size={17} />}
       title={role}
-      subtitle={sample.origin || 'Questioned exhibit segment (SPK-01)'}
-      actions={<StatusBadge tone={tone}>{sample.ref}</StatusBadge>}
+      subtitle={sample?.origin || (role === 'Questioned exhibit' ? 'Original exhibit preview; comparison uses the backend-denoised working audio' : 'Known / authorised reference specimen')}
+      actions={sample ? <StatusBadge tone={tone}>{sample.ref || 'Staged'}</StatusBadge> : <StatusBadge tone="neutral">Not selected</StatusBadge>}
     >
-      <div className="sample-wave" style={{ '--sample': color }}>
-        <Waveform seed={sample.seed || 5} count={130} height={96} color={color} />
-        <div className="wave-ruler">
-          <span>00:00</span>
-          <span>{sample.duration}</span>
-        </div>
-      </div>
-
-      <div className="meta-grid compact">
-        <div className="meta-item">
-          <FileAudio size={13} />
-          <span className="meta-key">File</span>
-          <span className="meta-val mono truncate">{sample.name}</span>
-        </div>
-        <div className="meta-item">
-          <Play size={13} />
-          <span className="meta-key">Duration</span>
-          <span className="meta-val mono">{sample.duration}</span>
-        </div>
-        <div className="meta-item">
-          <Waves size={13} />
-          <span className="meta-key">Format</span>
-          <span className="meta-val">{sample.format}</span>
-        </div>
-        <div className="meta-item">
-          <Gauge size={13} />
-          <span className="meta-key">SNR</span>
-          <span className="meta-val mono">{sample.snr || '—'}</span>
-        </div>
-        <div className="meta-item">
-          <Waves size={13} />
-          <span className="meta-key">Bandwidth</span>
-          <span className="meta-val">{sample.bandwidth || sample.sampleRate}</span>
-        </div>
-        <div className="meta-item">
-          <CheckCircle2 size={13} />
-          <span className="meta-key">Quality</span>
-          <span className="meta-val">
-            <StatusBadge tone={sample.quality === 'Good' ? 'green' : 'amber'} dot={false}>
-              {sample.quality}
-            </StatusBadge>
-          </span>
-        </div>
-      </div>
-
-      {sample.qualityNote && <p className="sample-note muted small">{sample.qualityNote}</p>}
-
-      <div className="btn-row">
-        <button className="btn btn-secondary btn-sm" onClick={() => inputRef.current?.click()}>
-          <FolderOpen size={14} /> Select file
-        </button>
-        <span className="muted small">Local browser selection · demo only</span>
-      </div>
-    </GlassPanel>
+      {!sample ? (
+        <EmptyState
+          compact
+          icon={<FileAudio size={20} />}
+          title="No sample selected"
+          action={onChoose ? (
+            <button type="button" className="btn btn-secondary btn-sm" onClick={onChoose}>
+              <UploadCloud size={14} /> {chooseLabel}
+            </button>
+          ) : null}
+        >
+          <p>{role === 'Reference specimen' ? 'Choose an authorised reference specimen to enable comparison. You can also drag a file onto this panel.' : 'Upload and analyse a questioned exhibit in the case workspace first.'}</p>
+        </EmptyState>
+      ) : (
+        <>
+          <div className="sample-wave">
+            <AudioWaveform
+              source={source}
+              color={color}
+              height={100}
+              emptyLabel={source ? undefined : 'Waveform unavailable — no local audio handle for this sample'}
+              ariaLabel={`${role} waveform`}
+            />
+          </div>
+          {objectUrl ? (
+            <AudioPlayer src={objectUrl} title={`${role} playback`} durationHint={sample.durationSeconds || 0} />
+          ) : (
+            <p className="field-help">Playback is unavailable for a backend-only reference record because the API does not expose original exhibit audio.</p>
+          )}
+          <MetaList
+            compact
+            columns={2}
+            items={[
+              { label: 'File', value: sample.name || 'Not available', icon: <FileAudio size={13} /> },
+              { label: 'Duration', value: sample.duration || 'Not available', mono: true, icon: <PlayCircle size={13} /> },
+              { label: 'Format', value: sample.format || 'Not available', icon: <Waves size={13} /> },
+              { label: 'Sample rate', value: sample.sampleRate || 'Not available', mono: true },
+              { label: 'Channels', value: sample.channels || 'Not available' },
+              { label: 'File size', value: formatBytes(sample.bytes), mono: true },
+            ]}
+          />
+          {sample.qualityNote && <p className="sample-note muted small">{sample.qualityNote}</p>}
+          {onChoose && (
+            <div className="btn-row">
+              <button type="button" className="btn btn-secondary btn-sm" onClick={onChoose}>
+                <UploadCloud size={14} /> {chooseLabel}
+              </button>
+              <span className="muted small">Selecting a new file marks the existing result as stale until comparison is re-run.</span>
+            </div>
+          )}
+        </>
+      )}
+    </Panel>
   );
 }
 
-import { computeSHA256 } from '../services/api';
-
-export default function ComparisonScreen({ questioned, reference, setReference, comparison, onRunComparison, onContinue }) {
-  const refInputRef = useRef(null);
-  const qInputRef = useRef(null);
-  const [questionedSample, setQuestionedSample] = useState(questioned);
-  const [dragRef, setDragRef] = useState(false);
+export default function ComparisonScreen({
+  evidence,
+  reference,
+  setReference,
+  comparisonStatus,
+  comparisonError,
+  result,
+  onRunComparison,
+  onContinue,
+  backendStatus,
+  runId,
+  reviewData,
+}) {
+  const [fileError, setFileError] = useState('');
+  const [hashing, setHashing] = useState(false);
+  const refInput = useRef(null);
   const notify = useToast();
-  const running = comparison.status === 'running';
-  const done = comparison.status === 'done';
-  const result = comparison.result;
+  const referenceToken = useRef(0);
+  const running = comparisonStatus === 'running';
+  const stale = Boolean(reference?.needsComparison);
+  const integrity = reviewData?.stages?.integrity?.metrics;
+  const denoise = reviewData?.stages?.denoise?.metrics;
 
-  const acceptFile = async (file, target) => {
-    if (!file) return;
-    const ok = /\.(wav|mp3|flac|m4a|ogg|aac|webm)$/i.test(file.name);
-    if (!ok) {
-      notify('Unsupported file type — select an audio file', 'warn');
+  const chooseReference = async (file) => {
+    const validationError = validateAudioFile(file);
+    if (validationError) {
+      setFileError(validationError);
+      notify(validationError, 'error');
       return;
     }
-    let sha = '';
-    try {
-      sha = await computeSHA256(file);
-    } catch {}
-    const patch = {
-      ref: `${target === 'q' ? 'EV' : 'REF'}-${String(Math.floor(Math.random() * 900) + 100)}`,
+    setFileError('');
+    setHashing(true);
+    const token = ++referenceToken.current;
+    const localRecord = {
+      ref: 'Pending reference ID',
       name: file.name,
       file,
-      hash: sha || 'pending-calculation…',
-      sizeMB: Number((file.size / (1024 * 1024)).toFixed(1)),
-      captured: 'Uploaded just now · local session',
-      custom: true,
+      origin: 'Examiner-selected reference specimen',
+      bytes: file.size,
+      sizeMB: file.size / (1024 * 1024),
+      format: formatFileType(file),
+      duration: '—',
+      durationSeconds: 0,
+      sampleRate: '—',
+      sampleRateHz: 0,
+      channels: '—',
+      channelCount: 0,
+      hash: '',
+      hashStatus: 'hashing',
+      backendId: null,
+      backendVerified: false,
+      captured: formatDateTime(new Date()),
+      needsComparison: true,
     };
-    if (target === 'q') {
-      setQuestionedSample((s) => ({ ...s, ...patch }));
-    } else {
-      setReference((r) => ({ ...r, ...patch }));
+    setReference(localRecord);
+
+    try {
+      const hash = await computeSHA256(file);
+      if (token !== referenceToken.current) return;
+      setReference((previous) =>
+        previous ? { ...previous, hash, hashStatus: 'ready', ref: `REF-${hash.slice(0, 6).toUpperCase()}` } : previous
+      );
+    } catch {
+      if (token !== referenceToken.current) return;
+      notify('The browser could not compute a SHA-256 fingerprint for the reference file.', 'warning');
     }
-    notify(`${target === 'q' ? 'Questioned' : 'Reference'} sample staged: ${file.name}${sha ? ` (SHA-256: ${sha.slice(0, 8)}…)` : ''}`, 'success');
+
+    try {
+      const buffer = await decodeAudioSource({ file });
+      if (token !== referenceToken.current) return;
+      setReference((previous) =>
+        previous
+          ? {
+              ...previous,
+              duration: formatDuration(buffer.duration),
+              durationSeconds: buffer.duration,
+              sampleRate: formatSampleRate(buffer.sampleRate),
+              sampleRateHz: buffer.sampleRate,
+              channels: formatChannels(buffer.numberOfChannels),
+              channelCount: buffer.numberOfChannels,
+            }
+          : previous
+      );
+    } catch {
+      // The backend will probe and report metadata when the comparison is run.
+    } finally {
+      if (token === referenceToken.current) setHashing(false);
+    }
   };
+
+  const handleRemoveReference = () => {
+    setReference(null);
+    setFileError('');
+    notify('Reference specimen removed from this session.', 'info');
+  };
+
+  const canCompare = Boolean(runId) && backendStatus === 'online' && Boolean(reference?.file || reference?.backendId) && !running && !hashing;
+  const disableReason = !runId
+    ? 'Run the evidence analysis pipeline first.'
+    : backendStatus !== 'online'
+      ? 'The analysis service must be online.'
+      : !reference
+        ? 'Select a reference specimen first.'
+        : hashing
+          ? 'Wait for the reference hash to complete.'
+          : '';
+
+  const metrics = buildComparisonMetrics(result);
 
   return (
     <div className="stack-xl">
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow">Screen 03 · Comparison</p>
-          <h2 className="h1">Speaker Comparison</h2>
-          <p className="muted">
-            Side-by-side analysis of the questioned extract against an authorized reference voice sample.
-          </p>
+      <PageHeading
+        eyebrow="Step 03 · Voice comparison"
+        title="Speaker comparison lab"
+        description="Compare the questioned exhibit against an authorised reference. The two waveforms are shown independently and are not time-aligned. Results are measured similarity outputs, not an identification conclusion."
+        actions={
+          <>
+            <StatusBadge tone={running ? 'info' : result ? 'success' : comparisonError ? 'danger' : 'neutral'}>
+              {running ? 'Comparison running' : result ? 'Measured result available' : comparisonError ? 'Comparison failed' : 'Awaiting comparison'}
+            </StatusBadge>
+            {stale && <StatusBadge tone="warning">Reference changed</StatusBadge>}
+          </>
+        }
+      />
+
+      {backendStatus !== 'online' && (
+        <div className="inline-alert warning banner">
+          <Info size={16} />
+          <div>
+            <strong>Analysis service offline</strong>
+            <p>Comparison requires the backend. No fallback or simulated score is calculated in the browser.</p>
+          </div>
         </div>
-        <div className="heading-badges">
-          <StatusBadge tone={done ? 'green' : running ? 'amber' : 'gray'}>
-            {done ? 'Demo result ready' : running ? 'Comparing…' : 'Awaiting comparison'}
-          </StatusBadge>
+      )}
+
+      {stale && (
+        <div className="inline-alert warning banner">
+          <AlertTriangle size={16} />
+          <div>
+            <strong>A new reference file is staged</strong>
+            <p>The displayed result, if any, belongs to the previous reference. Run the comparison again to replace the measured output. Re-analysis also resets any prior examiner approval.</p>
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="compare-grid">
-        <div
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragRef(true);
-          }}
-          onDragLeave={() => setDragRef(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            setDragRef(false);
-            acceptFile(e.dataTransfer.files?.[0], 'q');
-          }}
-          className={dragRef ? 'drag-target' : ''}
-        >
-          <SampleCard
-            role="Questioned Evidence"
-            tone="amber"
-            sample={questionedSample}
-            color="#fbbf24"
-            inputRef={qInputRef}
-          />
-        </div>
-        <SampleCard
-          role="Reference Voice Sample"
-          tone="cyan"
-          sample={reference}
-          color="#22d3ee"
-          inputRef={refInputRef}
+        <SamplePanel
+          role="Questioned exhibit"
+          tone="primary"
+          sample={evidence}
+          color="#D49A58"
+          source={evidence?.file ? { file: evidence.file } : undefined}
         />
+        <div
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => {
+            event.preventDefault();
+            const file = event.dataTransfer.files?.[0];
+            if (file) chooseReference(file);
+          }}
+        >
+          <SamplePanel
+            role="Reference specimen"
+            tone="reference"
+            sample={reference}
+            color="#8EA6BB"
+            source={reference?.file ? { file: reference.file } : undefined}
+            onChoose={() => refInput.current?.click()}
+            chooseLabel={reference ? 'Replace reference' : 'Select reference'}
+          />
+          <input
+            ref={refInput}
+            id="comparison-reference"
+            type="file"
+            accept="audio/*,.wav,.mp3,.flac,.ogg,.m4a"
+            hidden
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = '';
+              if (file) chooseReference(file);
+            }}
+          />
+          {fileError && (
+            <p className="inline-alert error" role="alert">
+              <AlertTriangle size={14} /> {fileError}
+            </p>
+          )}
+        </div>
       </div>
 
-      <input
-        ref={qInputRef}
-        type="file"
-        accept="audio/*,.wav,.mp3,.flac,.m4a,.ogg"
-        hidden
-        onChange={(e) => acceptFile(e.target.files?.[0], 'q')}
-      />
-      <input
-        ref={refInputRef}
-        type="file"
-        accept="audio/*,.wav,.mp3,.flac,.m4a,.ogg"
-        hidden
-        onChange={(e) => acceptFile(e.target.files?.[0], 'r')}
-      />
-
-      <GlassPanel
-        title="Comparison Pipeline"
-        subtitle="Simulated acoustic analysis — deterministic mock feature scores"
+      <Panel
+        icon={<ScanLine size={17} />}
+        title="Comparison execution"
+        subtitle="Runs the backend comparison against the analysed questioned audio and the selected reference."
         actions={
-          done ? (
-            <StatusBadge tone="violet">engine run {result.generatedAt}</StatusBadge>
+          result ? (
+            <StatusBadge tone="success">Backend result</StatusBadge>
           ) : (
-            <StatusBadge tone="gray">{EXAMPLE_REFERENCE.ref} loaded by default</StatusBadge>
+            <StatusBadge tone="neutral">{runId ? `Run ${runId}` : 'No active run'}</StatusBadge>
           )
         }
       >
-        {!running && !done && (
+        {running && (
+          <div className="compare-running">
+            <span className="running-orbit" aria-hidden="true">
+              <Loader2 size={26} className="spin" />
+            </span>
+            <div>
+              <p className="label-strong">Comparison in progress</p>
+              <p className="muted small">
+                The backend is measuring embeddings, pitch and MFCC distance. The analysis service does not return granular progress for this operation, so no artificial percentage is displayed.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {!running && comparisonError && (
+          <div className="inline-alert error banner" role="alert">
+            <ShieldAlert size={18} />
+            <div>
+              <strong>Comparison failed</strong>
+              <p>{comparisonError}</p>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={onRunComparison} disabled={!canCompare}>
+                <RefreshCw size={14} /> Retry comparison
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!running && !comparisonError && !result && (
           <div className="compare-idle">
-            <ScanLine size={30} className="idle-icon" />
+            <ScanLine size={30} className="idle-icon" aria-hidden="true" />
             <p className="label-strong">Ready to compare</p>
             <p className="muted small">
-              Both samples are staged. Running the pipeline extracts illustrative spectral, pitch and prosody
-              features and prints a clearly-labelled demo result.
+              {disableReason || 'Both samples are staged. Running the comparison produces measured acoustic outputs from the backend.'}
             </p>
-            <button className="btn btn-primary" onClick={onRunComparison}>
-              <ScanLine size={15} /> Run Comparison
+            <button type="button" className="btn btn-primary" onClick={onRunComparison} disabled={!canCompare}>
+              <ScanLine size={15} /> Run comparison
             </button>
           </div>
         )}
 
-        {running && (
-          <div className="compare-running">
-            <div className="scan-stage">
-              <Waveform seed={7} count={130} height={90} color="#22d3ee" animated />
-              <span className="wave-scanline" />
-            </div>
-            <p className="label-strong">
-              <Loader2 size={14} className="spin" /> Extracting features from both samples…
-            </p>
-            <div className="run-steps">
-              <span className="run-step done">Waveform load</span>
-              <span className="run-step done">VAD segmentation</span>
-              <span className="run-step active">MFCC extraction</span>
-              <span className="run-step">Pitch & prosody</span>
-              <span className="run-step">Index scoring</span>
-            </div>
-            <ProgressBar value={72} shimmer />
-          </div>
-        )}
-
-        {done && result && (
-          <div className="compare-result">
-            <div className="demo-banner">
-              <ShieldAlert size={18} />
+        {!running && result && (
+          <div className="comparison-result">
+            <div className="backend-banner">
+              <CheckCircle2 size={18} />
               <div>
-                <p className="demo-banner-title">DEMO RESULT — NOT A VALIDATED FORENSIC IDENTIFICATION</p>
-                <p className="demo-banner-sub">
-                  The scores below are simulated numbers generated by a prototype for academic demonstration. They do
-                  NOT establish that the two samples were produced by the same (or different) person, and no such
-                  conclusion is claimed.
+                <p className="backend-banner-title">Backend analysis output — measured similarity, not an identification</p>
+                <p className="backend-banner-sub">
+                  Model: {result.model} {result.version ? `(${result.version})` : ''}. {result.method || 'Combined acoustic-phonetic and embedding method.'} Examiner interpretation is required before any conclusion is stated.
                 </p>
               </div>
             </div>
 
             <div className="result-grid">
               <div className="result-col">
-                <p className="label-strong result-heading">Illustrative similarity indices</p>
-                {result.metrics.map((m) => (
-                  <div className="metric-row" key={m.name}>
-                    <div className="metric-head">
-                      <span>{m.name}</span>
-                      <span className="mono">{m.value.toFixed(2)}</span>
-                    </div>
-                    <ProgressBar value={m.value * 100} color="#38bdf8" height={6} />
+                <div className="result-heading-row">
+                  <div>
+                    <p className="label-strong result-heading">Measured outputs</p>
+                    <p className="muted small">Values are shown exactly as returned by the backend. They are not probabilities of identity.</p>
                   </div>
-                ))}
-                <div className="composite-row">
-                  <span>Composite illustrative index</span>
-                  <span className="mono composite-val">{result.composite.toFixed(2)}</span>
                 </div>
-                <StatusBadge tone="amber">{result.verdictBand}</StatusBadge>
+                <div className="metric-list">
+                  {metrics.map((metric) => (
+                    <div className="metric-row" key={metric.key}>
+                      <div className="metric-head">
+                        <span>{metric.label}</span>
+                        <span className="mono">{metric.display} <span className="metric-scale">{metric.scale}</span></span>
+                      </div>
+                      {metric.key === 'embedding' || metric.key === 'fused' ? (
+                        <ProgressBar value={Number(metric.value) * 100} color={metric.key === 'fused' ? '#D49A58' : '#8EA6BB'} height={6} label={metric.label} />
+                      ) : null}
+                      <p className="metric-description">{metric.description}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
 
               <div className="result-col">
-                <p className="label-strong result-heading">Sample quality & features</p>
-                <div className="quality-pair">
-                  <div className="quality-card amber-card">
-                    <p className="quality-role">Questioned</p>
-                    <p className="quality-score mono">SNR {questioned.snr}</p>
-                    <StatusBadge tone="amber" dot={false}>
-                      Fair quality
-                    </StatusBadge>
-                    <p className="muted small">{result.featuresQuestioned}</p>
+                <div className="result-heading-row">
+                  <p className="label-strong result-heading">Algorithmic interpretation</p>
+                </div>
+                <div className="hypothesis-box">
+                  <p className="hypothesis-label">Pipeline verbal output</p>
+                  <p className="hypothesis-text">{result.verbal || 'No verbal interpretation was returned.'}</p>
+                  <p className="field-help">This wording is generated by the comparison algorithm. It must not be adopted as an examiner conclusion without independent review.</p>
+                </div>
+
+                <p className="label-strong result-heading">Sample and run context</p>
+                <div className="context-list">
+                  <div className="context-row">
+                    <span>Reference specimen</span>
+                    <span className="mono">{result.specimenFile || reference?.name || '—'}</span>
                   </div>
-                  <div className="quality-card cyan-card">
-                    <p className="quality-role">Reference</p>
-                    <p className="quality-score mono">SNR {reference.snr || EXAMPLE_REFERENCE.snr}</p>
-                    <StatusBadge tone="green" dot={false}>
-                      Good quality
-                    </StatusBadge>
-                    <p className="muted small">{result.featuresReference}</p>
+                  <div className="context-row">
+                    <span>Questioned F0 mean ± SD</span>
+                    <span className="mono">
+                      {formatNumber(result.f0Questioned, 1)} ± {formatNumber(result.f0QuestionedStd, 1)} Hz
+                    </span>
+                  </div>
+                  <div className="context-row">
+                    <span>Reference F0 mean</span>
+                    <span className="mono">{formatNumber(result.f0Reference, 1)} Hz</span>
+                  </div>
+                  <div className="context-row">
+                    <span>Denoise engine</span>
+                    <span className="mono">{denoise?.engine || '—'}</span>
+                  </div>
+                  <div className="context-row">
+                    <span>Integrity flags</span>
+                    <span>{integrity?.flags?.length ? `${integrity.flags.length} returned` : 'None returned'}</span>
                   </div>
                 </div>
-                <p className="label-strong result-heading">Observations</p>
-                <ul className="obs-list">
-                  {result.observations.map((o) => (
-                    <li key={o}>{o}</li>
-                  ))}
-                </ul>
+
+                {integrity?.flags?.length > 0 && (
+                  <div className="flag-list">
+                    {integrity.flags.map((flag) => (
+                      <div className="flag-row" key={flag}>
+                        <AlertTriangle size={14} aria-hidden="true" />
+                        <span>{flag}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
+            </div>
+
+            <div className="result-actions">
+              <button type="button" className="btn btn-secondary" onClick={onRunComparison} disabled={!canCompare}>
+                <RefreshCw size={15} /> Re-run comparison
+              </button>
+              <span className="muted small">
+                {disableReason || 'Re-running replaces the stored comparison output and invalidates prior examiner approval.'}
+              </span>
             </div>
           </div>
         )}
-      </GlassPanel>
+      </Panel>
 
       <div className="cta-row">
-        <p className="cta-note muted">
-          The comparison record is attached to the draft report as an illustrative observation only.
-        </p>
-        <button className="btn btn-primary btn-lg" onClick={onContinue}>
-          Generate Transcript <ChevronRight size={16} />
+        <div className="cta-copy">
+          <p className="cta-title">Continue to transcript review</p>
+          <p className="cta-note muted">
+            {result
+              ? 'The measured comparison output will be attached to the report for examiner interpretation.'
+              : 'No comparison result is available. The report will state that comparison was not performed.'}
+          </p>
+        </div>
+        <button type="button" className="btn btn-primary btn-lg" onClick={onContinue}>
+          Review transcript <ChevronRight size={16} />
         </button>
       </div>
     </div>

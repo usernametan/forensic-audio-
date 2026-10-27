@@ -1,9 +1,27 @@
-export default function ProgressBar({ value = 0, color = '#22d3ee', height = 6, shimmer = false }) {
+export default function ProgressBar({
+  value = 0,
+  color,
+  height = 6,
+  indeterminate = false,
+  label,
+}) {
+  const safeValue = Math.max(0, Math.min(100, Number(value) || 0));
   return (
-    <div className="progress-track" style={{ height }}>
+    <div
+      className={`progress-track ${indeterminate ? 'is-indeterminate' : ''}`.trim()}
+      style={{ height }}
+      role="progressbar"
+      aria-label={label || 'Progress'}
+      aria-valuemin={indeterminate ? undefined : 0}
+      aria-valuemax={indeterminate ? undefined : 100}
+      aria-valuenow={indeterminate ? undefined : safeValue}
+    >
       <div
-        className={`progress-fill ${shimmer ? 'progress-shimmer' : ''}`}
-        style={{ width: `${Math.max(0, Math.min(100, value))}%`, background: `linear-gradient(90deg, ${color}66, ${color})` }}
+        className="progress-fill"
+        style={{
+          width: indeterminate ? '38%' : `${safeValue}%`,
+          background: color || undefined,
+        }}
       />
     </div>
   );

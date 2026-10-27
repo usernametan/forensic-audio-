@@ -1,16 +1,18 @@
 const TONES = {
-  cyan: 'chip-cyan',
-  green: 'chip-green',
-  amber: 'chip-amber',
-  violet: 'chip-violet',
-  gray: 'chip-gray',
-  red: 'chip-red',
+  neutral: 'badge-neutral',
+  info: 'badge-info',
+  primary: 'badge-primary',
+  reference: 'badge-reference',
+  success: 'badge-success',
+  warning: 'badge-warning',
+  danger: 'badge-danger',
+  accent: 'badge-accent',
 };
 
-export default function StatusBadge({ tone = 'cyan', dot = true, children, className = '' }) {
+export default function StatusBadge({ tone = 'neutral', dot = true, children, className = '' }) {
   return (
-    <span className={`status-chip ${TONES[tone] || TONES.cyan} ${className}`}>
-      {dot && <span className="chip-dot" />}
+    <span className={`status-badge ${TONES[tone] || TONES.neutral} ${className}`.trim()}>
+      {dot && <span className="badge-dot" aria-hidden="true" />}
       {children}
     </span>
   );

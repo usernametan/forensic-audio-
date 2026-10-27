@@ -64,6 +64,7 @@ def test_upload_runs_pipeline_and_gates_export():
     assert "diarize" in rev_data["stages"]
     assert "acoustic" in rev_data["stages"]
     assert "integrity" in rev_data["stages"]
+    assert len(rev_data["working_copy"]["sha256"]) == 64
 
     # Export must be gated before approval
     e = client.get(f"/export/{run_id}?fmt=html")
@@ -149,3 +150,70 @@ def test_denoise_snr_handles_mismatched_lengths():
     assert "snr_proxy_db" in res
     assert res["snr_proxy_db"] != float("inf")
 
+
+
+def test_reference_recomparison_transcript_and_translation_invalidate_approval():
+    r = client.post("/evidence/upload",
+                    files={"evidence": ("recompare.wav", _wav(360.0, dur=1.5), "audio/wav")},
+                    data={"source": "Court Exhibit", "collector": "IO Sen"})
+    assert r.status_code == 200, r.text
+    run_id = r.json()["run_id"]
+
+    for _ in range(60):
+        s = client.get(f"/pipeline/{run_id}/status").json()
+        if s["status"] in ("needs_review", "failed"):
+            break
+        time.sleep(1)
+    assert s["status"] == "needs_review", s
+
+    # Attach a reference later and re-run comparison.
+    c = client.post(
+        f"/pipeline/{run_id}/compare",
+        files={"specimen": ("late-reference.wav", _wav(380.0, dur=1.2), "audio/wav")},
+    )
+    assert c.status_code == 200, c.text
+    compare_body = c.json()
+    assert compare_body["run_status"] == "needs_review"
+    assert compare_body["comparison"]["specimen_file"] == "late-reference.wav"
+    assert compare_body["specimen"]["filename"] == "late-reference.wav"
+    assert len(compare_body["specimen"]["sha256"]) == 64
+
+    review = client.get(f"/review/{run_id}").json()
+    assert review["stages"]["compare"]["metrics"]["comparisons"][0]["specimen_file"] == "late-reference.wav"
+
+    # Approve, then edit transcript: approval must be invalidated.
+    approved = client.put(f"/review/{run_id}", json={
+        "examiner": "Examiner A",
+        "approved": True,
+        "conclusion": "Draft approval for regression test.",
+    })
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "approved"
+
+    tr = review["transcript"]
+    assert tr, review
+    edited = [{**tr[0], "text": "corrected text", "review_status": "reviewed"}]
+    saved = client.put(f"/review/{run_id}/transcript", json={"segments": edited})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["status"] == "needs_review"
+    after_edit = client.get(f"/review/{run_id}").json()
+    assert after_edit["translated"] == []
+    assert "translate" not in after_edit["stages"]
+
+    translated = client.post(f"/review/{run_id}/translate", json={"target": "hi"})
+    assert translated.status_code == 200, translated.text
+    body = translated.json()
+    assert body["target"] == "hi"
+    assert body["segments"]
+    assert body["status"] == "needs_review"
+    after_translation = client.get(f"/review/{run_id}").json()
+    assert after_translation["stages"]["translate"]["metrics"]["target"] == "hi"
+    assert after_translation["stages"]["translate"]["metrics"]["engine"] == body["engine"]
+
+    bad_target = client.post(f"/review/{run_id}/translate", json={"target": "fr"})
+    assert bad_target.status_code == 400
+
+    bad_time = client.put(f"/review/{run_id}/transcript", json={
+        "segments": [{"start": 5, "end": 1, "speaker": "SPEAKER_00", "text": "bad"}]
+    })
+    assert bad_time.status_code == 400

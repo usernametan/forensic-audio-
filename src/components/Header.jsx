@@ -1,24 +1,37 @@
-import { Menu, Bell, ChevronRight } from 'lucide-react';
-import { SCREENS } from '../data/mockData';
-
-const STATUS_BY_SCREEN = {
-  [SCREENS.DASHBOARD]: { label: 'Case Intake', tone: 'status-intake' },
-  [SCREENS.PREPROCESSING]: { label: 'Processing', tone: 'status-processing' },
-  [SCREENS.COMPARISON]: { label: 'Comparison', tone: 'status-compare' },
-  [SCREENS.TRANSCRIPTION]: { label: 'Transcription', tone: 'status-transcribe' },
-  [SCREENS.REPORT]: { label: 'Report Draft', tone: 'status-report' },
-};
+import { useEffect, useState } from 'react';
+import { Menu, ChevronRight, Clock3, FolderOpen } from 'lucide-react';
+import { SCREENS } from '../data/constants';
 
 const CRUMB = {
-  [SCREENS.DASHBOARD]: 'Case Dashboard',
-  [SCREENS.PREPROCESSING]: 'Audio Preprocessing',
-  [SCREENS.COMPARISON]: 'Speaker Comparison',
-  [SCREENS.TRANSCRIPTION]: 'Transcription & Translation',
-  [SCREENS.REPORT]: 'Forensic Report',
+  [SCREENS.DASHBOARD]: 'Case workspace',
+  [SCREENS.PREPROCESSING]: 'Audio analysis',
+  [SCREENS.COMPARISON]: 'Speaker comparison',
+  [SCREENS.TRANSCRIPTION]: 'Transcription & review',
+  [SCREENS.REPORT]: 'Forensic report',
 };
 
-export default function Header({ screen, caseInfo, onMenu, backendConnected, runId }) {
-  const status = STATUS_BY_SCREEN[screen] || STATUS_BY_SCREEN[SCREENS.DASHBOARD];
+export default function Header({
+  screen,
+  caseInfo,
+  onMenu,
+  backendStatus,
+  backendCheckedAt,
+  runId,
+  evidence,
+}) {
+  const statusLabel =
+    backendStatus === 'online' ? 'Analysis service online' : backendStatus === 'checking' ? 'Checking analysis service' : 'Analysis service offline';
+
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const clock = now
+    .toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })
+    .toLowerCase();
 
   return (
     <header className="topbar">
@@ -27,59 +40,48 @@ export default function Header({ screen, caseInfo, onMenu, backendConnected, run
           <Menu size={18} />
         </button>
         <div className="topbar-titles">
-          <h1 className="app-name">
-            AUDIO FORENSICS
-            <span className="app-name-tag">LAB</span>
-          </h1>
-          <p className="app-subtitle">
-            Intelligent Audio Evidence Analysis Platform
-            <span className="crumb-sep">
-              <ChevronRight size={11} />
+          <div className="topbar-crumb">
+            <span>Audio Forensics</span>
+            <ChevronRight size={12} aria-hidden="true" />
+            <strong>{CRUMB[screen]}</strong>
+          </div>
+          <p className="topbar-context">
+            <span>
+              <FolderOpen size={12} aria-hidden="true" />
+              {caseInfo?.id ? caseInfo.id : 'Case not registered'}
             </span>
-            <span className="crumb">{CRUMB[screen]}</span>
+            <span className="context-divider" aria-hidden="true" />
+            <span className="truncate">
+              {evidence?.name ? evidence.name : 'No evidence staged'}
+            </span>
           </p>
         </div>
       </div>
 
       <div className="topbar-right">
-        <div
-          className={`backend-status-pill ${backendConnected ? 'connected' : 'offline'}`}
-          title={backendConnected ? 'FastAPI Forensic Backend Connected (port 8000)' : 'Backend offline · Standalone prototype mode'}
-        >
-          <span className={`status-dot ${backendConnected ? 'online' : 'demo'}`} />
-          <span>{backendConnected ? 'API Live' : 'Demo Mode'}</span>
-        </div>
-
         {runId && (
-          <div className="run-id-pill" title={`Active Pipeline Run ID: ${runId}`}>
-            <span className="run-id-label">RUN</span>
+          <div className="run-pill" title={`Active pipeline run ${runId}`}>
+            <span className="run-pill-label">RUN</span>
             <span className="mono">{runId}</span>
           </div>
         )}
-
-        <div className={`case-status ${status.tone}`}>
-          <span className="pulse-dot" />
-          <span className="case-status-label">Case Status</span>
-          <span className="case-status-value">{status.label}</span>
-        </div>
-
-        <div className="case-id-pill" title="Active case reference">
-          <span className="case-id-label">CASE</span>
-          <span className="mono">{caseInfo.id || '—'}</span>
-        </div>
-
-        <button className="icon-btn" aria-label="Notifications">
-          <Bell size={16} />
-          <span className="icon-btn-dot" />
-        </button>
-
-        <div className="user-chip">
-          <span className="avatar">TE</span>
-          <span className="user-text">
-            <span className="user-name">Trainee Examiner</span>
-            <span className="user-role">Lab Batch B · Demo</span>
-          </span>
-        </div>
+        <span
+          className={`backend-pill ${backendStatus}`}
+          title={
+            backendStatus === 'online'
+              ? 'FastAPI analysis service is responding.'
+              : backendStatus === 'checking'
+                ? 'Checking the local analysis service.'
+                : 'The analysis service is unreachable. Start the FastAPI backend to run the pipeline.'
+          }
+        >
+          <span className={`status-dot ${backendStatus === 'online' ? 'online' : backendStatus === 'checking' ? 'checking' : 'offline'}`} />
+          {statusLabel}
+        </span>
+        <span className="topbar-time" title={backendCheckedAt ? `Live workstation clock · last health check ${backendCheckedAt}` : 'Live workstation clock'}>
+          <Clock3 size={13} aria-hidden="true" />
+          <span className="mono">{clock}</span>
+        </span>
       </div>
     </header>
   );
