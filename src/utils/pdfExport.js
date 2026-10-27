@@ -410,63 +410,170 @@ export async function exportReportPdf(data) {
   kvRow('Signed examiner', data.meta.approved ? data.reviewData?.approved_by || data.examinerName || 'Not signed' : 'Pending sign-off', { labelWidth: 46 });
   y += 2;
 
-  heading('2. Evidence File Details');
-  body('Questioned exhibit', { style: 'bold', size: 9.5 });
-  kv([
-    ['Reference', data.evidence.ref],
-    ['File name', data.evidence.name],
-    ['Duration', data.evidence.duration],
-    ['Format', data.evidence.format],
-    ['Sample rate', data.evidence.sampleRate],
-    ['Channels', data.evidence.channels],
-    ['SHA-256 (truncated)', data.evidence.hash],
-    ['Captured', data.evidence.captured],
-  ]);
-  y += 1;
-  body('Reference voice sample', { style: 'bold', size: 9.5 });
-  kv([
-    ['Reference', data.reference.ref],
-    ['File name', data.reference.name],
-    ['Duration', data.reference.duration],
-    ['Format', data.reference.format],
-    ['Origin', data.reference.origin],
-    ['Quality / SNR', `${data.reference.quality} / ${data.reference.snr}`],
-  ]);
-  y += 2;
-
-  heading('3. Audio Preprocessing Steps');
-  ['noise', 'enhance', 'separate'].forEach((key) => {
-    const stage = data.stages[key];
-    const label = { noise: 'Noise Reduction', enhance: 'Audio Enhancement', separate: 'Speaker Separation' }[key];
-    bullet(`${label} — ${stage.status.toUpperCase()} (${stage.progress}%)`);
-  });
-  y += 2;
-
-  heading('4. Speaker Separation Summary');
-  bullet('Diarization returned 2 speaker tracks across 47 speech segments.');
-  bullet('Speaker 01 — 02:31 active, 58% talk time, 29 segments, pitch band 112–148 Hz.');
-  bullet('Speaker 02 — 01:48 active, 42% talk time, 18 segments, pitch band 164–205 Hz.');
-  y += 2;
-
-  heading('5. Comparison Methodology & Illustrative Observations');
-  body(
-    'Methodology: both samples were passed through a simulated feature pipeline (VAD segmentation, MFCC extraction, pitch/prosody statistics). The indices below are deterministic mock values produced by the prototype — no validated forensic audio engine or trained speaker-recognition model was involved.'
-  );
-  y += 1;
-  if (data.comparison.status === 'done' && data.comparison.result) {
-    const r = data.comparison.result;
-    r.metrics.forEach((m) => {
-      bullet(`${m.name}: ${m.value.toFixed(2)} (illustrative)`);
+  // ---- 2. Evidence ----
+  heading('2', 'Evidence file details & SHA-256 verification');
+  if (!data.evidence) {
+    notice('No evidence file is registered in this session.', 'warning');
+  } else {
+    subheading('Questioned exhibit');
+    kvRow('Reference', data.evidence.ref, { labelWidth: 42 });
+    kvRow('File name', data.evidence.name, { labelWidth: 42 });
+    kvRow('Duration', data.evidence.duration, { labelWidth: 42 });
+    kvRow('Format', data.evidence.format, { labelWidth: 42 });
+    kvRow('Sample rate', data.evidence.sampleRate, { labelWidth: 42 });
+    kvRow('Channels', data.evidence.channels, { labelWidth: 42 });
+    kvRow('File size', formatBytes(data.evidence.bytes), { labelWidth: 42 });
+    kvRow('Backend evidence ID', data.evidence.backendId, { labelWidth: 42 });
+    kvRow('SHA-256', data.evidence.hash, { labelWidth: 42, mono: true });
+    kvRow('Working copy SHA-256', data.reviewData?.working_copy?.sha256, { labelWidth: 42, mono: true });
+    subheading('Reference specimen');
+    if (data.reference) {
+      kvRow('Reference', data.reference.ref, { labelWidth: 42 });
+      kvRow('File name', data.reference.name, { labelWidth: 42 });
+      kvRow('Duration', data.reference.duration, { labelWidth: 42 });
+      kvRow('Format', data.reference.format, { labelWidth: 42 });
+      kvRow('Backend specimen ID', data.reference.backendId, { labelWidth: 42 });
+      kvRow('SHA-256', data.reference.hash, { labelWidth: 42, mono: true });
+      if (data.reference.needsComparison) {
+        notice('This replacement reference has not been compared. No comparison result is attached until the backend comparison is re-run.', 'warning');
+      }
+    } else {
+      notice('No reference specimen was supplied. Voice comparison was not performed.', 'warning');
+    }
+    paragraph('The evidence SHA-256 and working-copy SHA-256 are values returned by the backend. This client export does not recompute or substitute them.', {
+      size: 7.4,
+      color: MUTED,
+      spacingAfter: 3,
     });
-    bullet(`Composite illustrative index: ${r.composite.toFixed(2)} — ${r.verdictBand}.`);
-    body(
-      'IMPORTANT: These figures do NOT establish that the questioned and reference samples were produced by the same person or by different persons. No identification conclusion is claimed or implied.',
-      { style: 'bold', color: [150, 60, 20] }
+  }
+
+  // ---- 3. Stages ----
+  heading('3', 'Preprocessing, models & intermediate hashes');
+  table(
+    ['Stage', 'Model / version', 'Output SHA-256', 'Status'],
+    stageRows.map((row) => [
+      row.label,
+      `${row.stage?.model || row.modelHint}${row.stage?.version ? ` · ${row.stage.version}` : ''}`,
+      row.stage?.sha256 ? row.stage.sha256.replace(/(.{32})/g, '$1\n') : 'Not returned',
+      row.status,
+    ]),
+    [43, 53, 64, 18],
+  );
+  paragraph('Stage output hashes are included where returned by the API. The working-copy hash is recorded in Section 2; the full audit trail remains in backend storage and is not invented in this client export.', {
+    size: 7.4,
+    color: MUTED,
+    spacingAfter: 3,
+  });
+
+  // ---- 4. Diarization ----
+  heading('4', 'Speaker separation & diarization summary');
+  if (speakerRows.length) {
+    table(
+      ['Speaker', 'Segments', 'Active speech', 'Share of timeline'],
+      speakerRows.map((row) => [row.speaker, row.turns, formatDuration(row.talk), row.share]),
+      [62, 30, 42, 44],
     );
   } else {
-    body('Comparison pipeline was not executed for this session; see live application for demo run.', {
-      color: [150, 60, 20],
+    notice('No diarization segments were returned for this run.');
+  }
+  paragraph('Speaker labels are machine cluster labels, not identities. Overlapping speech, telephonic bandwidth and short utterances can reduce reliability.', {
+    size: 7.4,
+    color: MUTED,
+    spacingAfter: 3,
+  });
+
+  // ---- 5. Acoustic and integrity ----
+  heading('5', 'Acoustic, signal & integrity findings');
+  const acoustic = data.reviewData?.stages?.acoustic?.metrics;
+  const denoise = data.reviewData?.stages?.denoise?.metrics;
+  const integrity = data.reviewData?.stages?.integrity?.metrics;
+
+  subheading('Signal measurements');
+  if (acoustic || denoise) {
+    if (denoise) {
+      bullet(`Denoise engine: ${valueOr(denoise.engine)}; SNR proxy: ${formatNumber(denoise.snr_proxy_db, 2)} dB.`);
+      if (denoise.before) {
+        bullet(`RMS before / after: ${formatNumber(denoise.before.rms, 4)} / ${formatNumber(denoise.after?.rms, 4)}; peak before / after: ${formatNumber(denoise.before.peak, 4)} / ${formatNumber(denoise.after?.peak, 4)}.`);
+        bullet(`Clipping ratio before / after: ${formatNumber(Number(denoise.before.clipped_ratio) * 100, 3)}% / ${formatNumber(Number(denoise.after?.clipped_ratio) * 100, 3)}%.`);
+      }
+    }
+    if (acoustic) {
+      bullet(`Mean F0: ${formatNumber(acoustic.f0_mean, 1)} Hz; F0 SD: ${formatNumber(acoustic.f0_std, 1)} Hz.`);
+      bullet(`Spectral centroid: ${formatNumber(acoustic.spectral_centroid, 1)} Hz; zero-crossing rate: ${formatNumber(acoustic.zcr, 5)}.`);
+    }
+  } else {
+    notice('No acoustic measurements were returned.');
+  }
+
+  subheading('Integrity flags');
+  if (integrity?.flags?.length) {
+    integrity.flags.forEach((flag) => bullet(String(flag)));
+  } else {
+    notice('No integrity flags were returned.');
+  }
+  if (integrity?.metadata) {
+    paragraph(
+      `Container probe: ${valueOr(integrity.metadata.codec, 'unknown')} · ${valueOr(integrity.metadata.sr, '—')} Hz · ${valueOr(integrity.metadata.ch, '—')} channels.`,
+      { size: 7.4, color: MUTED, spacingAfter: 3 },
+    );
+  }
+
+  subheading('Backend spectrograms');
+  const spectrogramEntries = data.runId ? [
+    { url: getOutputUrl(`${data.runId}_spec_original.png`), label: 'Original working-copy spectrogram' },
+    { url: getOutputUrl(`${data.runId}_spec_processed.png`), label: 'Processed spectrogram' },
+  ] : [];
+  if (!spectrogramEntries.length) {
+    paragraph('No backend run is active, so no spectrogram is attached.', { size: 8.2, color: MUTED, style: 'italic' });
+  } else {
+    let addedImages = 0;
+    for (const entry of spectrogramEntries) {
+      try {
+        const imageData = await loadImageDataUrl(entry.url);
+        const properties = doc.getImageProperties(imageData);
+        const imageWidth = CONTENT_W;
+        const imageHeight = Math.min(78, (imageWidth * properties.height) / properties.width);
+        ensure(imageHeight + 12);
+        drawLine(entry.label, MARGIN, CONTENT_W, { size: 7.8, style: 'bold', color: SIDEBAR });
+        y += 4;
+        doc.addImage(imageData, 'PNG', MARGIN, y, imageWidth, imageHeight, undefined, 'FAST');
+        y += imageHeight + 4;
+        addedImages += 1;
+      } catch {
+        // A missing spectrogram must not be replaced with a synthetic plot.
+      }
+    }
+    if (!addedImages) {
+      notice('Backend spectrogram images could not be retrieved for this client export. Use the official backend export after approval, or verify the outputs in the analysis workspace.', 'warning');
+    }
+  }
+
+  // ---- 6. Comparison ----
+  heading('6', 'Speaker comparison');
+  if (data.comparison && data.comparisonStatus !== 'error') {
+    paragraph(`Model: ${valueOr(data.comparison.model)} ${data.comparison.version ? `(${data.comparison.version})` : ''}. Method: ${valueOr(data.comparison.method)}.`, {
+      size: 8.6,
+      spacingAfter: 2,
     });
+    table(
+      ['Measured output', 'Value', 'Scale'],
+      comparisonMetrics.map((metric) => [metric.label, metric.display, metric.scale]),
+      [102, 34, 42],
+    );
+    notice(`Pipeline verbal output: ${valueOr(data.comparison.verbal, 'Not returned.')}`);
+    paragraph(
+      `These are measured similarity outputs, not probabilities that the same person produced both recordings. ${data.comparison.verdictDisclaimer || 'Examiner interpretation is required.'}`,
+      { size: 7.4, color: MUTED, spacingAfter: 3 },
+    );
+  } else {
+    notice(
+      data.comparisonStatus === 'stale'
+        ? 'A replacement reference is staged. The previous comparison is withheld until the comparison is re-run.'
+        : data.comparisonStatus === 'error'
+          ? 'The comparison operation failed; no score is reported.'
+          : 'Speaker comparison was not performed for this run.',
+      'warning',
+    );
   }
 
   // ---- 7. Transcript ----

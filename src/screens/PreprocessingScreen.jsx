@@ -69,63 +69,71 @@ function StageState({ status }) {
   );
 }
 
-export default function PreprocessingScreen({
-  evidence,
-  stages,
-  onRunNoise,
-  onRunSeparate,
-  onContinue,
-  runId,
-  reviewData,
-  backendConnected,
-}) {
-  const [specTab, setSpecTab] = useState('processed');
-  const [audioError, setAudioError] = useState(false);
-  const overall = Math.round(
-    (stages.noise.progress + stages.enhance.progress + stages.separate.progress) / 3
-  );
-  const anyRunning =
-    stages.noise.status === 'running' ||
-    stages.enhance.status === 'running' ||
-    stages.separate.status === 'running';
-  const noiseDone = stages.noise.status === 'complete';
-  const separated = stages.separate.status === 'complete';
+export default function PreprocessingScreen({ evidence, pipeline, onContinue, onBack, runId, reviewData, backendStatus }) {
+  const [sourceMode, setSourceMode] = useState('original');
+  const [specTab, setSpecTab] = useState('original');
+  const [currentTime, setCurrentTime] = useState(0);
+  const playerRef = useRef(null);
 
-  const denoiseMetrics = reviewData?.stages?.denoise?.metrics;
-  const diarizeMetrics = reviewData?.stages?.diarize?.metrics;
-  const acousticMetrics = reviewData?.stages?.acoustic?.metrics;
+  const denoiseStage = reviewData?.stages?.denoise;
+  const diarizeStage = reviewData?.stages?.diarize;
+  const acousticStage = reviewData?.stages?.acoustic;
+  const integrityStage = reviewData?.stages?.integrity;
+  const denoiseMetrics = denoiseStage?.metrics;
+  const acousticMetrics = acousticStage?.metrics;
+  const integrityMetrics = integrityStage?.metrics;
+  const segments = diarizeStage?.metrics?.segments || [];
+  const processedUrl = runId && denoiseStage ? getOutputUrl(`${runId}_denoised.wav`) : '';
+  const originalObjectUrl = useObjectUrl(evidence?.file);
+  const originalSource = evidence?.file ? { file: evidence.file } : undefined;
+  const processedSource = processedUrl ? { url: processedUrl } : undefined;
+  const selectedSource = sourceMode === 'processed' ? processedSource : originalSource;
+  const stageStates = useMemo(() => pipelineStageStates(pipeline), [pipeline]);
 
-  // Derive speaker tracks from real backend diarization if available
-  let displayTracks = SPEAKER_TRACKS;
-  if (diarizeMetrics?.segments?.length) {
-    const spkMap = {};
-    diarizeMetrics.segments.forEach((seg) => {
-      const spk = seg.speaker || 'SPEAKER_00';
-      if (!spkMap[spk]) {
-        spkMap[spk] = { dur: 0, count: 0 };
-      }
-      spkMap[spk].dur += Math.max(0, seg.end - seg.start);
-      spkMap[spk].count += 1;
-    });
-    const totalSpkDur = Object.values(spkMap).reduce((acc, v) => acc + v.dur, 0) || 1;
-    const colors = ['#22d3ee', '#a78bfa', '#34d399', '#fbbf24'];
-    displayTracks = Object.keys(spkMap).map((k, idx) => {
-      const d = spkMap[k];
-      const m = Math.floor(d.dur / 60);
-      const s = Math.round(d.dur % 60);
-      const durStr = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-      const pct = Math.round((d.dur / totalSpkDur) * 100);
-      return {
-        id: k,
-        label: k.replace('SPEAKER_', 'Speaker '),
-        color: colors[idx % colors.length],
-        talkTime: `${pct}%`,
-        segments: d.count,
-        duration: durStr,
-        pitch: acousticMetrics?.f0_mean ? `${Math.round(acousticMetrics.f0_mean - (acousticMetrics.f0_std || 20))} – ${Math.round(acousticMetrics.f0_mean + (acousticMetrics.f0_std || 20))} Hz (Global F0)` : '120 – 165 Hz (Est.)',
-        seed: (idx + 1) * 17,
-      };
-    });
+  const originalDecoded = useDecodedAudio(originalSource, { buckets: 900 });
+  const processedDecoded = useDecodedAudio(processedSource, { buckets: 900 });
+
+  useEffect(() => {
+    if (!processedUrl && sourceMode === 'processed') setSourceMode('original');
+  }, [processedUrl, sourceMode]);
+
+  useEffect(() => {
+    setCurrentTime(0);
+    if (playerRef.current) playerRef.current.seek(0);
+  }, [sourceMode, runId]);
+
+  const pipelineStatusLabel =
+    pipeline.status === 'needs_review'
+      ? 'Awaiting examiner review'
+      : pipeline.status === 'approved'
+        ? 'Examiner approved'
+        : pipeline.status === 'failed'
+          ? 'Analysis failed'
+          : pipeline.status === 'running' || pipeline.status === 'queued'
+            ? 'Analysis running'
+            : 'Not started';
+
+  const pipelineTone =
+    pipeline.status === 'needs_review' ? 'warning' : pipeline.status === 'approved' ? 'success' : pipeline.status === 'failed' ? 'danger' : pipeline.status === 'running' || pipeline.status === 'queued' ? 'info' : 'neutral';
+
+  if (!evidence) {
+    return (
+      <div className="stack-xl">
+        <PageHeading
+          eyebrow="Step 02 · Signal analysis"
+          title="Audio analysis workspace"
+          description="Upload a questioned exhibit in the case workspace before opening the analysis lab."
+        />
+        <Panel>
+          <EmptyState icon={<FileAudio size={24} />} title="No exhibit available">
+            <p>The analysis workspace is tied to a staged exhibit and a backend pipeline run.</p>
+            <button type="button" className="btn btn-primary" onClick={onBack}>
+              Return to case workspace
+            </button>
+          </EmptyState>
+        </Panel>
+      </div>
+    );
   }
 
   return (

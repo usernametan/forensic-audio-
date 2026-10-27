@@ -84,7 +84,6 @@ export default function App() {
   const [comparisonError, setComparisonError] = useState('');
   const [language, setLanguage] = useState('en');
   const [sessionStartedAt] = useState(() => new Date());
-  const [liveTranslations, setLiveTranslations] = useState(TRANSLATIONS);
 
   const notify = useToast();
   const contentRef = useRef(null);
@@ -201,160 +200,103 @@ export default function App() {
 
   const navigate = useCallback((next) => setScreen(next), []);
 
-  // Poll real pipeline progress from backend
-  const startPipelinePolling = useCallback(
-    (activeRunId) => {
-      notify(`Pipeline launched for Run ID ${activeRunId}`, 'info');
-      setStages({
-        noise: { status: 'running', progress: 10 },
-        enhance: { status: 'idle', progress: 0 },
-        separate: { status: 'idle', progress: 0 },
+  const resetAnalysis = useCallback(() => {
+    stopPolling();
+    setPipeline(initialPipeline);
+    setRunId('');
+    setReviewData(null);
+    setIsApproved(false);
+    setComparisonStatus('idle');
+    setComparisonError('');
+    setLanguage('en');
+  }, [stopPolling]);
+
+  const handleEvidenceChange = useCallback(
+    (nextEvidence) => {
+      resetAnalysis();
+      setEvidence(nextEvidence);
+    },
+    [resetAnalysis]
+  );
+
+  const handleReferenceChange = useCallback((nextReference) => {
+    setReference((previous) => {
+      const resolved = typeof nextReference === 'function' ? nextReference(previous) : nextReference;
+      if (!resolved) return resolved;
+      if (runId) return { ...resolved, needsComparison: true };
+      return resolved;
+    });
+  }, [runId]);
+
+  const handleBeginAnalysis = useCallback(async () => {
+    if (runId && evidence) {
+      navigate(SCREENS.PREPROCESSING);
+      notify('Returning to the existing analysis run.', 'info');
+      return true;
+    }
+    if (!evidence?.file) {
+      notify('Select an evidence audio file before starting analysis.', 'error');
+      return false;
+    }
+    if (backendStatus !== 'online') {
+      notify('The analysis service is offline. Start the FastAPI backend before beginning analysis.', 'error');
+      return false;
+    }
+
+    resetAnalysis();
+    try {
+      const upload = await uploadEvidence({
+        evidenceFile: evidence.file,
+        specimenFiles: reference?.file ? [reference.file] : [],
+        source: caseInfo.source || '',
+        collector: caseInfo.collector || '',
+        questionnaire: JSON.stringify({
+          caseId: caseInfo.id || '',
+          title: caseInfo.title || '',
+          submittedAt: new Date().toISOString(),
+        }),
       });
 
-      const pollTimer = window.setInterval(async () => {
-        try {
-          const status = await getPipelineStatus(activeRunId);
-          const prog = status.progress || 0;
+      setRunId(upload.run_id);
+      setEvidence((previous) => ({
+        ...previous,
+        ...metadataFromUpload(upload),
+        ref: `EV-${String(upload.evidence_id).slice(0, 6).toUpperCase()}`,
+        uploadStatus: 'uploaded',
+      }));
 
-          if (prog < 25) {
-            setStages({
-              noise: { status: 'running', progress: Math.min(90, prog * 4) },
-              enhance: { status: 'idle', progress: 0 },
-              separate: { status: 'idle', progress: 0 },
-            });
-          } else if (prog < 55) {
-            setStages({
-              noise: { status: 'complete', progress: 100 },
-              enhance: { status: 'complete', progress: 100 },
-              separate: { status: 'running', progress: Math.min(90, (prog - 25) * 3) },
-            });
-          } else {
-            setStages({
-              noise: { status: 'complete', progress: 100 },
-              enhance: { status: 'complete', progress: 100 },
-              separate: { status: 'complete', progress: 100 },
-            });
-          }
+      if (upload.specimen_ids?.length) {
+        const specimenId = upload.specimen_ids[0];
+        setReference((previous) => ({
+          ...(previous || {}),
+          ref: `REF-${String(specimenId).slice(0, 6).toUpperCase()}`,
+          backendId: specimenId,
+          uploadStatus: 'uploaded',
+        }));
+        getEvidence(specimenId)
+          .then((specimen) => {
+            setReference((previous) => ({
+              ...(previous || {}),
+              ...specimenMetadata(specimen),
+              ref: previous?.ref || `REF-${String(specimenId).slice(0, 6).toUpperCase()}`,
+              origin: previous?.origin || 'Reference specimen supplied with the exhibit',
+            }));
+          })
+          .catch((error) => {
+            notify(`Reference specimen metadata could not be loaded: ${error.message}`, 'warning');
+          });
+      }
 
-          if (status.status === 'needs_review' || status.status === 'approved' || prog >= 100) {
-            window.clearInterval(pollTimer);
-            delete timersRef.current.pipeline;
-            notify('Pipeline stages complete — loading acoustic & integrity analysis', 'success');
-
-            // Load full review metrics from backend
-            try {
-              const rev = await getReview(activeRunId);
-              setReviewData(rev);
-              if (rev.status === 'approved') setIsApproved(true);
-
-              // Update comparison metrics if reference specimen was compared
-              const cmpList = rev.stages?.compare?.metrics?.comparisons;
-              if (cmpList && cmpList.length > 0) {
-                const c0 = cmpList[0];
-                setComparison({
-                  status: 'done',
-                  result: {
-                    generatedAt: new Date().toLocaleTimeString(),
-                    engineLabel: `${c0.model} (${c0.version})`,
-                    featuresQuestioned: `Embedding cosine: ${c0.auto_cosine.toFixed(4)} · F0: ${c0.f0?.f0_mean?.toFixed(1) || '—'} Hz`,
-                    featuresReference: `Known specimen · Ref F0: ${c0.f0?.ref_mean?.toFixed(1) || '—'} Hz`,
-                    metrics: [
-                      { name: 'ECAPA-TDNN Embedding Cosine', value: c0.auto_cosine },
-                      { name: 'Pitch (F0) Contour Match', value: Math.max(0.1, 1 - Math.abs((c0.f0?.f0_mean || 0) - (c0.f0?.ref_mean || 0)) / 100) },
-                      { name: 'MFCC Acoustic Correlation', value: 1 / (1 + (c0.mfcc_dist || 2) / 10) },
-                      { name: 'Fused Multi-Metric Match', value: c0.fused_score },
-                    ],
-                    composite: c0.fused_score,
-                    verdictBand: c0.verbal,
-                    observations: [
-                      `Automated embedding cosine similarity: ${c0.auto_cosine.toFixed(4)}.`,
-                      `Questioned speech F0 pitch: ${c0.f0?.f0_mean?.toFixed(1) || '—'} Hz vs Specimen: ${c0.f0?.ref_mean?.toFixed(1) || '—'} Hz.`,
-                      `Acoustic-phonetic MFCC distance: ${c0.mfcc_dist?.toFixed(3) || '—'}.`,
-                      `Combined fused score: ${c0.fused_score.toFixed(4)}.`,
-                      `Hypothesis assessment: ${c0.verbal}.`,
-                      'Per Section 65B/63 BSA guidelines: Decision support only. Certified examiner review is mandatory.',
-                    ],
-                  },
-                });
-              }
-
-              // Update live transcript segments from Whisper
-              if (rev.transcript && rev.transcript.length > 0) {
-                setLiveTranscript((prev) => ({
-                  ...prev,
-                  sourceFormat: 'Whisper Automatic Speech Recognition (Aligned)',
-                  confidence: 0.88,
-                  segments: rev.transcript.map((s, idx) => ({
-                    time: `${String(Math.floor(s.start / 60)).padStart(2, '0')}:${String(Math.floor(s.start % 60)).padStart(2, '0')}`,
-                    speaker: s.speaker || 'SPEAKER_00',
-                    tokens: [{ t: s.text }],
-                    raw: s,
-                  })),
-                }));
-              }
-
-              // Update live translation segments
-              if (rev.translated && rev.translated.length > 0) {
-                setLiveTranslations((prev) => ({
-                  ...prev,
-                  english: {
-                    ...prev.english,
-                    segments: rev.translated.map((s) => ({
-                      time: `${String(Math.floor(s.start / 60)).padStart(2, '0')}:${String(Math.floor(s.start % 60)).padStart(2, '0')}`,
-                      speaker: s.speaker || 'SPEAKER_00',
-                      tokens: [{ t: s.text }],
-                      raw: s,
-                    })),
-                  },
-                }));
-              }
-            } catch (revErr) {
-              console.error('Error fetching review data', revErr);
-            }
-          } else if (status.status === 'failed') {
-            window.clearInterval(pollTimer);
-            delete timersRef.current.pipeline;
-            notify(`Pipeline execution failed: ${status.error || 'Unknown error'}`, 'warn');
-          }
-        } catch (err) {
-          console.error('Polling error', err);
-        }
-      }, 1500);
-
-      timersRef.current.pipeline = pollTimer;
-    },
-    [notify]
-  );
-
-  // Fallback demo stage sequence (used when running standalone without backend)
-  const runStageSequence = useCallback(
-    (keys) => {
-      const queue = [...keys];
-      const runNext = () => {
-        const key = queue.shift();
-        if (!key) return;
-        const meta = STAGE_META[key];
-        setStages((prev) => ({ ...prev, [key]: { status: 'running', progress: 0 } }));
-        const started = Date.now();
-        const timer = window.setInterval(() => {
-          const p = Math.min(100, Math.round(((Date.now() - started) / meta.durationMs) * 100));
-          setStages((prev) => ({
-            ...prev,
-            [key]: { status: p >= 100 ? 'complete' : 'running', progress: p },
-          }));
-          if (p >= 100) {
-            window.clearInterval(timer);
-            delete timersRef.current[key];
-            notify(`${meta.label} — stage completed`, 'success');
-            runNext();
-          }
-        }, 60);
-        timersRef.current[key] = timer;
-      };
-      runNext();
-    },
-    [notify]
-  );
+      startPipelinePolling(upload.run_id);
+      notify('Exhibit uploaded, hashed server-side and queued for analysis.', 'success');
+      navigate(SCREENS.PREPROCESSING);
+      return true;
+    } catch (error) {
+      setEvidence((previous) => (previous ? { ...previous, uploadStatus: 'error' } : previous));
+      notify(`Upload failed: ${error.message}`, 'error');
+      return false;
+    }
+  }, [backendStatus, caseInfo, evidence, navigate, notify, reference, resetAnalysis, runId, startPipelinePolling]);
 
   const handleRunComparison = useCallback(async () => {
     if (backendStatus !== 'online') {
@@ -378,74 +320,33 @@ export default function App() {
       notify(message, 'error');
       return;
     }
-    notify('Speaker diarization started — clustering 2 voices', 'info');
-    runStageSequence(['separate']);
-  }, [stages, notify, runStageSequence]);
+    if (comparisonStatus === 'running') return;
 
-  const handleRunComparison = useCallback(() => {
-    if (comparison.status === 'running') return;
-    setComparison({ status: 'running', result: null });
-    notify('Running speaker comparison pipeline…', 'info');
-    const timer = window.setTimeout(() => {
-      setComparison({ status: 'done', result: COMPARISON_RESULT });
-      notify('Comparison complete — feature scores generated', 'success');
-    }, 2200);
-    timersRef.current.comparison = timer;
-  }, [comparison.status, notify]);
-
-  const handleApplyTranslation = useCallback(() => {
-    setTranslationStatus('translating');
-    const timer = window.setTimeout(() => {
-      setAppliedLanguage(language);
-      setTranslationStatus('ready');
-      notify(`Translation applied — ${TRANSLATIONS[language]?.label || language}`, 'success');
-    }, 600);
-    timersRef.current.translation = timer;
-  }, [language, notify]);
-
-  const handleBeginAnalysis = useCallback(async () => {
-    const stagedEvidence = evidence || EXAMPLE_EVIDENCE;
-    if (!evidence) {
-      setEvidence(EXAMPLE_EVIDENCE);
-      notify('No file uploaded — example exhibit EV-001 loaded for demonstration', 'info');
-    } else {
-      notify(`Exhibit ${evidence.ref || 'staged'} locked — opening preprocessing lab`, 'success');
+    setComparisonStatus('running');
+    setComparisonError('');
+    try {
+      const response = await compareSpecimen(runId, {
+        file: reference.file,
+        specimenId: reference.backendId,
+      });
+      setReference((previous) => ({
+        ...(previous || {}),
+        ...specimenMetadata(response.specimen),
+        ref: `REF-${String(response.specimen.id).slice(0, 6).toUpperCase()}`,
+        origin: previous?.origin || 'Reference specimen supplied with the exhibit',
+        needsComparison: false,
+      }));
+      const review = await refreshReview(runId);
+      setReviewData(review);
+      setIsApproved(review.status === 'approved');
+      setComparisonStatus('done');
+      notify('Comparison completed. Measured outputs are ready for examiner interpretation.', 'success');
+    } catch (error) {
+      setComparisonStatus('error');
+      setComparisonError(error.message);
+      notify(`Comparison failed: ${error.message}`, 'error');
     }
-
-    // If connected to FastAPI backend and a real file is staged, upload and start real pipeline
-    if (backendConnected && stagedEvidence?.file) {
-      try {
-        notify('Uploading exhibit & registering custody record with backend…', 'info');
-        const uploadRes = await uploadEvidence({
-          evidenceFile: stagedEvidence.file,
-          specimenFiles: reference?.file ? [reference.file] : [],
-          source: caseInfo.source || stagedEvidence.source || '',
-          collector: caseInfo.collector || '',
-          questionnaire: JSON.stringify({ caseId: caseInfo.id, title: caseInfo.title }),
-        });
-
-        const activeRun = uploadRes.run_id;
-        setRunId(activeRun);
-        const m = Math.floor((uploadRes.duration_s || 0) / 60);
-        const s = Math.round((uploadRes.duration_s || 0) % 60);
-        const realDur = uploadRes.duration_s ? `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : undefined;
-        setEvidence((prev) => ({
-          ...(prev || stagedEvidence),
-          hash: uploadRes.sha256 || prev?.hash,
-          duration: realDur || prev?.duration,
-          sampleRate: uploadRes.sample_rate ? `${Math.round(uploadRes.sample_rate / 1000)} kHz (${uploadRes.sample_rate} Hz)` : prev?.sampleRate,
-          channels: uploadRes.channels ? (uploadRes.channels === 1 ? '1 (Mono)' : '2 (Stereo)') : prev?.channels,
-          format: uploadRes.codec || prev?.format,
-        }));
-        startPipelinePolling(activeRun);
-      } catch (err) {
-        console.error('Backend upload failed, continuing in demo mode', err);
-        notify(`Backend upload error: ${err.message}. Continuing in standalone demo mode.`, 'warn');
-      }
-    }
-
-    navigate(SCREENS.PREPROCESSING);
-  }, [evidence, backendConnected, reference, caseInfo, navigate, notify, startPipelinePolling]);
+  }, [backendStatus, comparisonStatus, notify, reference, refreshReview, runId]);
 
   const handleApproveRun = useCallback(
     async ({ examiner, conclusion }) => {
@@ -589,8 +490,10 @@ export default function App() {
   } else if (screen === SCREENS.TRANSCRIPTION) {
     activeScreen = (
       <TranscriptionScreen
-        transcript={liveTranscript}
-        translations={liveTranslations}
+        transcript={transcript}
+        runId={runId}
+        backendStatus={backendStatus}
+        reviewData={reviewData}
         language={language}
         setLanguage={setLanguage}
         onTranslate={handleTranslate}
@@ -605,11 +508,11 @@ export default function App() {
         caseInfo={caseInfo}
         evidence={evidence}
         reference={reference}
-        stages={stages}
-        comparison={comparison}
-        transcript={liveTranscript}
-        translations={liveTranslations}
-        appliedLanguage={appliedLanguage}
+        pipeline={pipeline}
+        comparisonStatus={comparisonStatus}
+        comparison={comparisonResult}
+        transcript={transcript}
+        reviewData={reviewData}
         onReturn={handleReturnToDashboard}
         runId={runId}
         backendStatus={backendStatus}
