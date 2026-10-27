@@ -6,7 +6,9 @@
   "scripts": {
     "setup": "npm install && python3 -m pip install -r backend/requirements.txt",
     "setup:ml": "npm install && ./scripts/install_ml.sh",
-    "dev": "concurrently -n \"api,ui\" -c \"blue,green\" \"python3 -m uvicorn backend.app.main:app --reload --port 8000\" \"vite\"",
+    "kill:port": "fuser -k 8000/tcp 2>/dev/null || true",
+    "predev": "npm run kill:port",
+    "dev": "concurrently -k -n \"api,ui\" -c \"blue,green\" \"python3 -m uvicorn backend.app.main:app --reload --port 8000\" \"vite\"",
     "dev:ui": "vite",
     "dev:backend": "python3 -m uvicorn backend.app.main:app --reload --port 8000",
     "start": "npm run dev",
