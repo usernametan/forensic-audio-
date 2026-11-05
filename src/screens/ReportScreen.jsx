@@ -277,7 +277,7 @@ export default function ReportScreen({
         <button type="button" className="btn btn-secondary" onClick={() => window.print()}>
           <Printer size={15} /> Print report
         </button>
-        <button type="button" className="btn btn-ghost" onClick={onReturn}>
+        <button type="button" className="btn btn-secondary" onClick={onReturn}>
           <ArrowLeft size={15} /> Return to workspace
         </button>
         <span className="report-actions-note muted small">
