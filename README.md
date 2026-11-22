@@ -8,7 +8,18 @@
     <img src="https://img.shields.io/badge/FastAPI-0.115-262626?style=flat-square&logo=fastapi&logoColor=white&labelColor=111111" alt="FastAPI" />
     <img src="https://img.shields.io/badge/React-18-262626?style=flat-square&logo=react&logoColor=white&labelColor=111111" alt="React 18" />
     <img src="https://img.shields.io/badge/Integrity-SHA--256_Chain_of_Custody-fafafa?style=flat-square&labelColor=111111" alt="SHA-256 Chain of Custody" />
-    <img src="https://img.shields.io/badge/Workflow-Sec_65B_IEA_/_Sec_63_BSA-262626?style=flat-square&labelColor=111111" alt="Section 65B IEA / Section 63 BSA" />
+    <img src="https://img.shields.io/github/last-commit/usernametan/forensic-audio-?style=flat-square&label=Updated&labelColor=111111&color=262626" alt="Last Commit" />
+  </p>
+
+  <p>
+    <sub>
+      <a href="#overview">Overview</a> &nbsp;·&nbsp;
+      <a href="#core-capabilities">Capabilities</a> &nbsp;·&nbsp;
+      <a href="#system-architecture">Architecture</a> &nbsp;·&nbsp;
+      <a href="#api--reverse-proxy-surface">API</a> &nbsp;·&nbsp;
+      <a href="#setup--installation">Setup</a> &nbsp;·&nbsp;
+      <a href="#legal--compliance-notes">Legal Notes</a>
+    </sub>
   </p>
 </div>
 
