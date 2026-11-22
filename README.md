@@ -1,236 +1,158 @@
-# Forensic Audio Evidence Analysis Platform
+<div align="center">
+  <img src="docs/assets/banner.svg" alt="Forensic Audio Evidence Analysis Platform" width="100%" />
 
-Automated, court-ready audio forensic examination and speaker verification suite compliant with **Section 65B of the Indian Evidence Act** and **Section 63 of the Bharatiya Sakshya Adhiniyam (BSA) 2023**.
+  <br /><br />
 
-The platform provides an end-to-end laboratory workflow: exhibit intake, cryptographic SHA-256 hashing, adaptive noise reduction, speech enhancement, speaker separation (diarization), acoustic-phonetic & embedding voice comparison, multilingual transcription/translation, examiner review gating, and court certificate generation.
-
----
-
-## Key Features
-
-- **Chain of Custody & Immutability:**
-  - Original evidence files are preserved read-only and never modified in place.
-  - Cryptographic SHA-256 fingerprinting calculated immediately upon upload (both in-browser via Web Crypto and server-side).
-  - Every derived intermediate (working copy, denoised extract, spectrograms, report) is hashed and linked.
-  - Immutable audit trail recording actor, action, file hashes, tool versions, and timestamps.
-- **Signal Processing & Pluggable AI Pipeline:**
-  - **Denoising:** DeepFilterNet with adaptive spectral-subtraction fallback, hum/hiss detection, and artifact warnings.
-  - **Diarization:** pyannote.audio with energy-VAD fallback providing speaker segmentation and talk-time clustering.
-  - **Speaker Comparison:** SpeechBrain ECAPA-TDNN deep embedding cosine similarity fused with acoustic-phonetic pitch (F0 mean/std) and MFCC spectral distance.
-  - **Transcription & Translation:** OpenAI Whisper ASR aligned to speaker turns; IndicTrans2 translation for English, Hindi, and Marathi.
-  - **Acoustic & Integrity Diagnostics:** Praat/librosa pitch contours, formants, spectral centroid, zero-crossing rate, clipping detection, splice jump heuristics, and ENF/deepfake warning flags.
-- **Human-in-the-Loop (HITL) Decision Support:**
-  - Automated outputs are strictly advisory; automated segregation or identification is never claimed without certified examiner confirmation.
-  - Export of court-ready reports is cryptographically locked (HTTP 409 Conflict) until an examiner explicitly reviews and approves the findings.
-- **Admissible Court Documentation:**
-  - Generates Section 65B IEA / Section 63 BSA Part-A (hash verification) and Part-B (examiner ordinary course certificate) reports.
-  - Dual export formats: Official server-side PDF / HTML reports + interactive client-side PDF export via jsPDF.
+  <p>
+    <img src="https://img.shields.io/badge/Python-3.11+-262626?style=flat-square&logo=python&logoColor=white&labelColor=111111" alt="Python 3.11+" />
+    <img src="https://img.shields.io/badge/FastAPI-0.115-262626?style=flat-square&logo=fastapi&logoColor=white&labelColor=111111" alt="FastAPI" />
+    <img src="https://img.shields.io/badge/React-18-262626?style=flat-square&logo=react&logoColor=white&labelColor=111111" alt="React 18" />
+    <img src="https://img.shields.io/badge/Integrity-SHA--256_Chain_of_Custody-fafafa?style=flat-square&labelColor=111111" alt="SHA-256 Chain of Custody" />
+    <img src="https://img.shields.io/badge/Workflow-Sec_65B_IEA_/_Sec_63_BSA-262626?style=flat-square&labelColor=111111" alt="Section 65B IEA / Section 63 BSA" />
+  </p>
+</div>
 
 ---
 
-## Technology Stack
+## Overview
 
-- **Frontend:**
-  - React 18 (SPA)
-  - Vite 5 (Bundler & dev server with reverse proxy)
-  - Lucide React (Forensic & laboratory iconography)
-  - jsPDF (Client-side report assembly)
-  - Custom Vanilla CSS design system (warm forensic palette, charcoal workstation sidebar, responsive waveforms, interactive spectrogram viewers)
-- **Backend:**
-  - Python 3.11+
-  - FastAPI (REST API with async pipeline orchestration)
-  - SQLAlchemy 2.0 (Relational ORM for evidence, runs, audit logs, and reports)
-  - SQLite (Default zero-config database) / PostgreSQL (Supported via `FAA_DATABASE_URL`)
-- **Audio Processing & Machine Learning:**
-  - `soundfile`, `scipy`, `numpy` (Core audio I/O and numerical processing)
-  - `librosa` (STFT, spectrograms, MFCCs, pitch tracking via pyin)
-  - `matplotlib` (Headless Agg rendering of high-resolution spectrogram PNGs)
-  - `jinja2` & `fpdf2` (Official court report HTML & PDF generation)
-  - Optional heavy models: `deepfilternet`, `pyannote.audio`, `speechbrain`, `whisper`, `transformers`
-- **Testing & Verification:**
-  - `pytest` & `pytest-asyncio`
-  - `fastapi.testclient` / `httpx`
+The **Forensic Audio Evidence Analysis Platform** (`forensic-audio-`) is an end-to-end laboratory examination workstation for questioned audio recordings. It combines cryptographic evidence intake, non-destructive working-copy isolation, multi-stage signal enhancement and acoustic-phonetic analysis, speaker comparison, multilingual transcription/translation, and examiner-gated **Section 65B (Indian Evidence Act)** / **Section 63 (Bharatiya Sakshya Adhiniyam, 2023)** report generation.
+
+> [!IMPORTANT]
+> **Evidentiary Scope & Examiner-Review Safeguard:**
+> All automated outputs—including denoising diagnostics, speaker diarization, ECAPA-TDNN / acoustic-phonetic similarity scores, integrity flags, and ASR transcripts—are **decision-support tools only**. Automated metrics **never** independently establish speaker identity or guarantee legal admissibility. Report export is locked at the API layer (`HTTP 409 Conflict`) until a qualified human examiner reviews the findings, documents limitations (e.g., overlapping speech, clipping, telephonic bandwidth, or low SNR), and explicitly approves the conservative conclusion.
 
 ---
 
-## Directory Structure
+## Core Capabilities
 
+- **Cryptographic Chain of Custody & Immutability**
+  - Original evidence files are stored strictly read-only (`backend/storage/originals/`) and are never processed in place.
+  - SHA-256 hashes are computed immediately on upload (client-side via Web Crypto API and server-side via `hashutil.py`), and every derived intermediate (working copy, denoised audio, spectrogram PNG, exported report) is hashed and linked to its parent.
+  - Append-only `AuditLogs` record every operation with actor, action, input/output hashes, model/tool versions, parameters, and timestamps.
+- **Pluggable Signal Processing & ML Pipeline (with Deterministic Fallbacks)**
+  - **Denoising (`denoise.py`):** DeepFilterNet neural enhancement with adaptive spectral-gating fallback, hum/hiss detection, and over-processing warnings.
+  - **Diarization (`diarize.py`):** `pyannote.audio` speaker turn segmentation with energy-VAD clustering fallback.
+  - **Voice Comparison (`compare.py`):** SpeechBrain ECAPA-TDNN deep speaker embedding cosine similarity combined with acoustic-phonetic F0 pitch contours and MFCC spectral distance.
+  - **Transcription & Translation (`transcribe_translate.py`):** OpenAI Whisper ASR aligned to speaker turns, plus IndicTrans2 translation support for English, Hindi, and Marathi (with structured locale-stub fallback in lightweight CPU deployments).
+  - **Acoustic & Integrity Diagnostics (`acoustic_integrity.py`):** Pitch contours, formants, spectral centroid, zero-crossing rate, clipping detection, splice-jump heuristics, and ENF/deepfake warning indicators.
+- **Examiner Review Station & Dual Report Export**
+  - Synchronized dual waveform and high-resolution spectrogram inspection (original vs. processed).
+  - Server-side official HTML/PDF report generation (`Jinja2` + `fpdf2`) and client-side interactive PDF export (`jsPDF`), structured for Part-A (technical hash verification) and Part-B (examiner certification).
+
+---
+
+## System Architecture
+
+```mermaid
+flowchart TD
+    UPLOAD["1. Exhibit Intake (Web Crypto SHA-256 + POST /evidence/upload)"] --> ORIG["Read-Only Original Storage + SHA-256"]
+    ORIG --> WORK["Isolated Working Copy"]
+    WORK --> DENOISE["2. Denoising (DeepFilterNet / Spectral Fallback)"]
+    DENOISE --> DIARIZE["3. Diarization (pyannote / Energy VAD)"]
+    DIARIZE --> COMPARE["4. Voice Comparison (ECAPA-TDNN + F0/MFCC)"]
+    DIARIZE --> ASR["5. ASR & Translation (Whisper + IndicTrans2)"]
+    WORK --> ACOUSTIC["6. Acoustic & Integrity Diagnostics (librosa / Praat)"]
+    COMPARE --> GATE["7. Human Examiner Review Gate (PUT /review/{run_id})"]
+    ASR --> GATE
+    ACOUSTIC --> GATE
+    GATE -->|HTTP 409 until Approved| EXPORT["8. Section 65B / 63 BSA Report Export (HTML / PDF)"]
 ```
-forensic-audio/
+
+### Repository Layout
+
+```text
+forensic-audio-/
 ├── backend/
 │   ├── app/
-│   │   ├── audit.py           # Immutable forensic audit logging
-│   │   ├── config.py          # Settings and paths
-│   │   ├── db.py              # SQLAlchemy database engine & session
-│   │   ├── hashutil.py        # SHA-256 file hashing
-│   │   ├── main.py            # FastAPI application entrypoint
-│   │   ├── models.py          # Database schema (Evidence, Runs, Logs, Reports)
-│   │   ├── storage.py         # Original, working, and output storage management
-│   │   └── routers/
-│   │       ├── evidence.py    # POST /evidence/upload, GET /evidence/{id}
-│   │       ├── pipeline_status.py # GET /pipeline/{run_id}/status
-│   │       ├── review.py      # GET/PUT /review/{run_id}
-│   │       └── export.py      # GET /export/{run_id} (HTML/PDF)
-│   ├── pipeline/
-│   │   ├── acoustic_integrity.py  # Acoustic metrics & splice/tamper checks
-│   │   ├── audio_util.py          # Resampling, SNR, levels, spectrogram PNG
-│   │   ├── compare.py             # ECAPA-TDNN & acoustic-phonetic comparison
-│   │   ├── denoise.py             # DeepFilterNet & spectral gating
-│   │   ├── diarize.py             # pyannote & energy VAD diarization
-│   │   ├── orchestrator.py        # Pipeline orchestrator
-│   │   ├── report.py              # Jinja2 & fpdf2 court report builder
-│   │   └── transcribe_translate.py# Whisper ASR & Indic translation
-│   ├── storage/                   # originals, working copies, and outputs
-│   ├── tests/
-│   │   └── test_api.py        # End-to-end integration tests
-│   ├── Dockerfile
-│   └── requirements.txt
+│   │   ├── main.py             # FastAPI entrypoint
+│   │   ├── models.py           # SQLAlchemy 2.0 schema (Evidence, Runs, AuditLogs, Reports)
+│   │   ├── audit.py            # Immutable forensic audit logger
+│   │   ├── hashutil.py         # SHA-256 hashing utilities
+│   │   ├── storage.py          # Original / working / output isolation
+│   │   └── routers/            # evidence.py, pipeline_status.py, review.py, export.py
+│   ├── pipeline/               # denoise, diarize, compare, transcribe_translate, acoustic_integrity, report, orchestrator
+│   ├── storage/                # originals/, working/, outputs/
+│   └── tests/                  # Pytest API & audio utility integration tests
 ├── src/
-│   ├── components/            # App shell, workflow stepper, panels, audio & signal views
-│   ├── data/
-│   │   └── constants.js       # Screen keys, stage definitions, upload rules, limitations
-│   ├── screens/
-│   │   ├── DashboardScreen.jsx     # Case intake & evidence registration
-│   │   ├── PreprocessingScreen.jsx # Denoising, spectrograms, audio player, tracks
-│   │   ├── ComparisonScreen.jsx    # Speaker comparison & feature indices
-│   │   ├── TranscriptionScreen.jsx # Whisper transcript & multi-language translation
-│   │   └── ReportScreen.jsx        # Court report & Section 65B/63 certification
-│   ├── services/
-│   │   └── api.js             # API client & browser SHA-256 hashing
-│   ├── styles/
-│   │   └── global.css         # Complete UI design system
-│   ├── utils/
-│   │   └── pdfExport.js       # Client jsPDF report builder
-│   ├── App.jsx                # Application root with live API integration
-│   └── main.jsx
-├── Dockerfile                 # Multi-stage frontend container
-├── docker-compose.yml         # Full-stack composition (API, Web, PostgreSQL)
-├── package.json
-└── vite.config.js             # Vite configuration with backend proxy
+│   ├── screens/                # Dashboard, Preprocessing, Comparison, Transcription, Report
+│   ├── components/             # AudioPlayer, AudioWaveform, SpectrogramView, SpeakerTimeline, FlowStepper
+│   ├── services/api.js         # API client & browser SHA-256 hashing
+│   └── utils/pdfExport.js      # Client-side jsPDF report builder
+├── docker-compose.yml          # Full-stack composition (FastAPI, Nginx SPA, PostgreSQL 16)
+└── scripts/install_ml.sh       # Optional heavy neural model installer
 ```
 
 ---
 
-## How to Run the Project
+## API & Reverse Proxy Surface
+
+| Endpoint | Purpose |
+| :--- | :--- |
+| `POST /evidence/upload` | Ingest questioned audio exhibit, compute SHA-256, create working copy, start pipeline |
+| `GET /evidence/{id}` | Retrieve exhibit metadata, hashes, and custody lineage |
+| `GET /pipeline/{run_id}/status` | Poll asynchronous stage progress and intermediate metrics |
+| `GET / PUT /review/{run_id}` | Fetch findings or submit examiner review approval/rejection |
+| `GET /export/{run_id}` | Export Section 65B / 63 BSA HTML or PDF report (**returns `409` until examiner-approved**) |
+| `GET /health` | Service health check |
+
+---
+
+## Setup & Installation
 
 ### Prerequisites
 
-- **Python:** Version 3.11+
-- **Node.js:** Version 18+ (tested on Node 20 / 24)
-- **Virtual Environment tool:** `python3 -m venv`
-- **Package Managers:** `pip` and `npm`
-- **FFmpeg (Recommended):** Expands codec decoding for `.m4a`, AAC, and non-standard `.mp3` containers (`sudo apt-get install -y ffmpeg libsndfile1`). The pipeline uses `soundfile` for `.wav`, `.flac`, and standard files, automatically falling back to FFmpeg/FFprobe when present.
+- **Python** `3.11+` (`python3 -m venv` recommended)
+- **Node.js** `18+`
+- **FFmpeg** (recommended for `.m4a`, AAC, and non-standard `.mp3` containers; `soundfile` handles `.wav`/`.flac` directly)
 
----
-
-### Step 1: Install Dependencies (Single Command)
-
-To install both frontend and backend dependencies (including bundled static FFmpeg for `.m4a` decoding) in one go:
+### 1. Install Dependencies
 
 ```bash
+# Install frontend and core backend dependencies
 npm run setup
+
+# Optional: install full local ML models (PyTorch, DeepFilterNet, pyannote, SpeechBrain, Whisper)
+npm run setup:ml
 ```
 
-*(Alternatively, you can install individually:*
-- *Backend: `python3 -m pip install -r backend/requirements.txt`*
-- *Frontend: `npm install`)*
-
----
-
-### Step 2: Start the Development Services
-
-You can start both the FastAPI backend and Vite frontend together in a **single command**:
+### 2. Run Locally
 
 ```bash
-# Run from repository root
+# Start FastAPI (port 8000) and Vite SPA (port 5173) concurrently
 npm run dev
 ```
 
-*(Or from the workspace root: `./start.sh` or `npm run dev`)*
+- **Frontend UI:** `http://localhost:5173`
+- **Backend OpenAPI Docs:** `http://localhost:8000/docs`
 
-This concurrently starts:
-- **FastAPI backend** on `http://localhost:8000` (OpenAPI docs at `http://localhost:8000/docs`)
-- **Vite frontend** on `http://localhost:5173` with automatic reverse proxy to port 8000
+To run services individually:
+- `npm run dev:backend` — FastAPI on port `8000`
+- `npm run dev:ui` — Vite dev server on port `5173`
 
----
-
-#### Optional: Running Services Individually
-
-If you prefer separate terminals:
-- **Backend only:** `npm run dev:backend` (or `python3 -m uvicorn backend.app.main:app --reload --port 8000`)
-- **Frontend only:** `npm run dev:ui` (or `npx vite`)
-
-
----
-
-### Step 3: Run the Verification Tests
-
-Execute the automated test suite to verify all backend endpoints, async pipeline execution, review gating, and Section 65B/63 report exports:
+### 3. Run via Docker Compose
 
 ```bash
-# Run pytest from repository root
-python3 -m pytest backend/tests -v
+docker compose up --build
 ```
 
-Build and validate the production frontend bundle:
+Starts PostgreSQL 16 (`5432`), FastAPI (`8000`), and the Nginx SPA (`5173`).
+
+---
+
+## Verification & Testing
+
 ```bash
+# Backend integration & audio utility tests
+python3 -m pytest backend/tests -v
+
+# Production frontend build validation
 npm run build
 ```
 
 ---
 
-### Running via Docker (Optional)
-
-To start the full stack including PostgreSQL:
-
-```bash
-docker compose up --build
-```
-- Frontend (SPA via Nginx): `http://localhost:5173`
-- Backend API (FastAPI): `http://localhost:8000`
-- PostgreSQL: `localhost:5432`
-
-#### Reverse Proxy Architecture:
-Both the Vite development server (`vite.config.js`) and production Docker container (`nginx.conf`) configure a reverse proxy to route frontend calls to the FastAPI backend without CORS friction:
-- `/evidence/` — Exhibit uploads and metadata retrieval
-- `/pipeline/` — Pipeline execution polling and status checks
-- `/review/` — Examiner review gate (approval/rejection)
-- `/export/` — Section 65B/63 BSA certified HTML and PDF court report generation
-- `/outputs/` — Processed audio extracts and spectrogram visualization PNGs
-- `/health` — Backend health check
-
-If deploying to custom reverse proxies (e.g. Traefik, AWS ALB, Cloudflare), replicate these upstream routes targeting the backend on port 8000 with a `client_max_body_size` of at least `100M` for high-resolution forensic audio exhibits.
-
-## Laboratory Workflow & Usage Guide
-
-1. **Screen 01 — Case Registration & Intake:**
-   - Enter Case ID (e.g. `CEP-2026-AF-0147`), Case Title, Custody Source, and Seizing Officer.
-   - Drag and drop or browse to select the questioned audio file (`.wav`, `.mp3`, `.flac`, `.ogg`, `.m4a`).
-   - The browser immediately computes the SHA-256 hash.
-   - Click **Begin Analysis**. The exhibit is uploaded to `/evidence/upload`, stored read-only, and the background pipeline is launched.
-2. **Screen 02 — Preprocessing & Laboratory:**
-   - Watch the pipeline stages complete: Denoising, Diarization, Acoustic Analysis.
-   - Inspect the dual spectrogram viewer (Raw Original vs Processed Denoised).
-   - Listen to the cleaned audio extract using the integrated audio player.
-   - Inspect the diarized speaker tracks with talk times and pitch bands.
-3. **Screen 03 — Speaker Comparison:**
-   - Stage an authorized reference voice sample (specimen).
-   - Review multi-metric feature indices: ECAPA-TDNN deep embedding cosine similarity, F0 pitch contour similarity, and MFCC acoustic distance.
-   - View the conservative verbal hypothesis.
-4. **Screen 04 — Transcription & Translation:**
-   - Review the Whisper ASR transcript aligned to speaker turns.
-   - Select target language (English, Hindi, Marathi) and apply translation.
-5. **Screen 05 — Forensic Report & Section 65B / 63 BSA Certification:**
-   - Review consolidated evidence data, before/after SNR, diarization, and comparison metrics.
-   - Fill in the **Examiner Full Name** and **Conservative Conclusion**.
-   - Click **Approve & Certify Report**.
-   - The official **Section 65B Indian Evidence Act / Section 63 BSA 2023 Certificate** unlocks.
-   - Download the official backend-certified PDF or HTML report.
-
----
-
 ## Legal & Compliance Notes
 
-1. **Section 65B / Section 63 BSA Admissibility:** Automated algorithms are decision-support tools only. Under Indian law, an electronic record requires certification by a person occupying a responsible official position in relation to the operation of the relevant device.
-2. **Deterministic Fallbacks & Heavy Models:** The pipeline utilizes real models when dependencies are present and deterministic acoustic fallbacks (librosa spectral gating, energy VAD, MFCC cosine) when heavy model weights are uninstalled. Fallbacks are explicitly logged in the audit trail and report.
-3. **Translation Stub (IndicTrans2):** Full IndicTrans2 model checkpoints require multi-gigabyte neural weights and dedicated GPU memory. In lightweight CPU deployments and default containers, translation is stubbed with a structured locale mapping prefix (`[<target>] <source_text>`) while maintaining full schema compatibility for court reporting.
+1. **Statutory Certification:** Under **Section 65B of the Indian Evidence Act** and **Section 63 of the Bharatiya Sakshya Adhiniyam (BSA) 2023**, electronic records require certification by a person occupying a responsible official position in relation to the operation of the relevant device.
+2. **Deterministic Fallback Transparency:** Whenever optional heavy ML weights (`deepfilternet`, `pyannote.audio`, `speechbrain`, `openai-whisper`, `IndicTrans2`) are not installed, the pipeline executes deterministic acoustic fallbacks (spectral gating, energy VAD, MFCC cosine) and explicitly logs the active engine and version in both the audit trail and final report.
