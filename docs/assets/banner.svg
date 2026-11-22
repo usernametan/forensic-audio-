@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 280" width="1200" height="280" role="img" aria-label="Forensic Audio Evidence Analysis Platform">
+  <defs>
+    <pattern id="grid-fa" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M 32 0 L 0 0 0 32" fill="none" stroke="#161616" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="280" fill="#0a0a0a"/>
+  <rect width="1200" height="280" fill="url(#grid-fa)"/>
+
+  <!-- Precision Acoustic Waveform Graphic -->
+  <g transform="translate(860, 140)" stroke="#525252" stroke-width="2" stroke-linecap="round">
+    <line x1="0" y1="0" x2="270" y2="0" stroke="#262626" stroke-width="1"/>
+    <line x1="16" y1="-12" x2="16" y2="12"/>
+    <line x1="30" y1="-26" x2="30" y2="26" stroke="#737373"/>
+    <line x1="44" y1="-16" x2="44" y2="16"/>
+    <line x1="58" y1="-44" x2="58" y2="44" stroke="#a3a3a3"/>
+    <line x1="72" y1="-64" x2="72" y2="64" stroke="#e5e5e5"/>
+    <line x1="86" y1="-34" x2="86" y2="34" stroke="#a3a3a3"/>
+    <line x1="100" y1="-72" x2="100" y2="72" stroke="#fafafa"/>
+    <line x1="114" y1="-48" x2="114" y2="48" stroke="#d4d4d4"/>
+    <line x1="128" y1="-22" x2="128" y2="22" stroke="#737373"/>
+    <line x1="142" y1="-56" x2="142" y2="56" stroke="#e5e5e5"/>
+    <line x1="156" y1="-38" x2="156" y2="38" stroke="#a3a3a3"/>
+    <line x1="170" y1="-18" x2="170" y2="18"/>
+    <line x1="184" y1="-42" x2="184" y2="42" stroke="#d4d4d4"/>
+    <line x1="198" y1="-28" x2="198" y2="28" stroke="#737373"/>
+    <line x1="212" y1="-14" x2="212" y2="14"/>
+    <line x1="226" y1="-24" x2="226" y2="24" stroke="#737373"/>
+    <line x1="240" y1="-10" x2="240" y2="10"/>
+    <line x1="254" y1="-6" x2="254" y2="6"/>
+  </g>
+
+  <!-- Corner Framing -->
+  <path d="M 32 48 L 32 32 L 48 32" fill="none" stroke="#404040" stroke-width="1.5"/>
+  <path d="M 1168 232 L 1168 248 L 1152 248" fill="none" stroke="#404040" stroke-width="1.5"/>
+
+  <!-- Content -->
+  <text x="72" y="88" fill="#737373" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="12" letter-spacing="3">FORENSIC-AUDIO // SHA-256 CHAIN OF CUSTODY</text>
+  <text x="72" y="144" fill="#fafafa" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="44" font-weight="700" letter-spacing="-0.8">AUDIO FORENSICS</text>
+  <text x="72" y="184" fill="#a3a3a3" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="17">Evidence Examination, Speech Enhancement, Speaker Comparison &amp; Examiner Review Suite</text>
+
+  <!-- Tech Pill Bar -->
+  <g transform="translate(72, 214)" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" fill="#d4d4d4">
+    <rect x="0" y="0" width="84" height="24" rx="2" fill="#171717" stroke="#2e2e2e"/>
+    <text x="14" y="16">FASTAPI</text>
+    <rect x="94" y="0" width="84" height="24" rx="2" fill="#171717" stroke="#2e2e2e"/>
+    <text x="108" y="16">REACT 18</text>
+    <rect x="188" y="0" width="96" height="24" rx="2" fill="#171717" stroke="#2e2e2e"/>
+    <text x="200" y="16">SQLALCHEMY</text>
+    <rect x="294" y="0" width="110" height="24" rx="2" fill="#171717" stroke="#2e2e2e"/>
+    <text x="306" y="16">DSP / WHISPER</text>
+  </g>
+</svg>
